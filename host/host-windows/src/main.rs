@@ -46,10 +46,10 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Persistent device static key (stable identity across runs; OS-keystore wrapping per
-    // ADR-0009 Option A is a later increment).
+    // Persistent device static key (stable identity across runs), wrapped at rest by the
+    // default protector — Windows DPAPI per ADR-0009 Option A (`identity::default_protector`).
     let device = match identity::role_key_path("host") {
-        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        Some(p) => identity::load_or_create(p, identity::default_protector().as_ref())?,
         None => {
             eprintln!("[host] no config dir found; using an ephemeral device key");
             crypto::generate_static_keypair()?

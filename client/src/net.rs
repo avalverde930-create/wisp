@@ -30,7 +30,7 @@ pub async fn net_main(
     token: String,
 ) -> Result<()> {
     let device = match identity::role_key_path("client") {
-        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        Some(p) => identity::load_or_create(p, identity::default_protector().as_ref())?,
         None => crypto::generate_static_keypair()?,
     };
     let endpoint = transport::client_endpoint()?;
@@ -91,7 +91,7 @@ pub fn run_bench(addr: SocketAddr, token: String) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("tokio runtime")?;
     rt.block_on(async move {
         let device = match identity::role_key_path("client") {
-        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        Some(p) => identity::load_or_create(p, identity::default_protector().as_ref())?,
         None => crypto::generate_static_keypair()?,
     };
         let endpoint = transport::client_endpoint()?;

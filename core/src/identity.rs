@@ -5,9 +5,9 @@
 //! **pinning** (remember a peer's static to detect a changed key / MITM on reconnect)
 //! and for `Noise_IK` 0-RTT reconnect.
 //!
-//! The private key is stored wrapped at rest by an `AtRestProtector`. The cross-platform
-//! default here is `Unprotected` (bytes written as-is — spike/dev only). host-windows
-//! supplies a DPAPI-backed protector — the real Option-A wrapping — in a later increment.
+//! The private key is stored wrapped at rest by an `AtRestProtector`. `default_protector()`
+//! selects Windows DPAPI (`DpapiProtector`, the real Option-A per-user wrapping) on Windows,
+//! and falls back to `Unprotected` (bytes written as-is — spike/dev only) elsewhere.
 
 use std::path::{Path, PathBuf};
 
@@ -104,6 +104,67 @@ pub fn role_key_path(role: &str) -> Option<PathBuf> {
     default_key_path().map(|p| p.with_file_name(format!("{role}-device.key")))
 }
 
+/// The default at-rest protector: Windows DPAPI (ADR-0009 Option A) on Windows, else
+/// `Unprotected`. host + client use this so the persisted device key is wrapped at rest.
+pub fn default_protector() -> Box<dyn AtRestProtector> {
+    #[cfg(windows)]
+    {
+        Box::new(DpapiProtector)
+    }
+    #[cfg(not(windows))]
+    {
+        Box::new(Unprotected)
+    }
+}
+
+#[cfg(windows)]
+pub use win::DpapiProtector;
+
+#[cfg(windows)]
+mod win {
+    use anyhow::{Context, Result};
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{LocalFree, HLOCAL};
+    use windows::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB,
+    };
+
+    use super::AtRestProtector;
+
+    /// Windows DPAPI per-user at-rest wrapping (ADR-0009 Option A): the blob is encrypted
+    /// under the user's login secret; another user or machine cannot unwrap it.
+    pub struct DpapiProtector;
+
+    impl AtRestProtector for DpapiProtector {
+        fn protect(&self, plaintext: &[u8]) -> Result<Vec<u8>> {
+            dpapi(plaintext, true)
+        }
+        fn unprotect(&self, wrapped: &[u8]) -> Result<Vec<u8>> {
+            dpapi(wrapped, false)
+        }
+    }
+
+    fn dpapi(data: &[u8], protect: bool) -> Result<Vec<u8>> {
+        unsafe {
+            let input = CRYPT_INTEGER_BLOB {
+                cbData: data.len() as u32,
+                pbData: data.as_ptr() as *mut u8,
+            };
+            let mut output = CRYPT_INTEGER_BLOB::default();
+            if protect {
+                CryptProtectData(&input, PCWSTR::null(), None, None, None, 0, &mut output)
+                    .context("CryptProtectData")?;
+            } else {
+                CryptUnprotectData(&input, None, None, None, None, 0, &mut output)
+                    .context("CryptUnprotectData")?;
+            }
+            let out = std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec();
+            let _ = LocalFree(HLOCAL(output.pbData as *mut core::ffi::c_void));
+            Ok(out)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +199,15 @@ mod tests {
         let r = load_or_create(&path, &Unprotected);
         assert!(r.is_err());
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn dpapi_roundtrip() {
+        let p = DpapiProtector;
+        let secret = b"wisp device key material 0123456789abcdef";
+        let wrapped = p.protect(secret).unwrap();
+        assert_ne!(wrapped.as_slice(), secret); // genuinely wrapped
+        assert_eq!(p.unprotect(&wrapped).unwrap(), secret);
     }
 }

@@ -16,6 +16,14 @@ thiserror.workspace = true
 anyhow.workspace = true
 
 # Phase 1 (in progress): snow wired into core::crypto. ring/serde added as needed.
+
+# Windows DPAPI for at-rest device-key wrapping (core::identity, ADR-0009 Option A).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+] }
 # In Phase 2-3 this crate splits into core/protocol-types, core/crypto, core/transport,
 # core/session, core/media, core/identity, core/audit, core/telemetry. Until compile times
 # hurt or a second binary needs a subset, ONE crate with modules is correct.
