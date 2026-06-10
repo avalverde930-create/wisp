@@ -66,6 +66,20 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Async QSV encode round-trip (ADR-0011 4c.1c.1a): `host-windows.exe --selftest-qsv`.
+    // Encodes a synthetic frame through the hardware async encoder and decodes it back.
+    if std::env::args().any(|a| a == "--selftest-qsv") {
+        match h264::selftest_qsv(1920, 1080) {
+            Ok(t) => println!(
+                "[host] QSV round-trip: encoded {} bytes (start code {}); decoded {} frame(s); \
+                 mean abs error {:.2}/255",
+                t.encoded_bytes, t.start_code, t.decoded_frames, t.mean_abs_error
+            ),
+            Err(e) => println!("[host] QSV self-test failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     // H.264 encode self-test (ADR-0011 4c.1b): `host-windows.exe --selftest-h264`. Encodes a
     // synthetic frame through the software MFT and reports the H.264 output.
     if std::env::args().any(|a| a == "--selftest-h264") {

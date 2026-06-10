@@ -12,15 +12,16 @@
 use std::mem::ManuallyDrop;
 
 use anyhow::{Context, Result};
-use windows::core::PWSTR;
+use windows::core::{Interface, PWSTR};
 use windows::Win32::Media::MediaFoundation::{
-    eAVEncH264VProfile_Main, IMFActivate, IMFSample, IMFTransform, MFCreateMediaType,
+    eAVEncH264VProfile_Main, IMFActivate, IMFMediaEventGenerator, IMFSample, IMFTransform,
+    METransformDrainComplete, METransformHaveOutput, METransformNeedInput, MFCreateMediaType,
     MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFShutdown, MFStartup, MFTEnumEx,
     MFT_FRIENDLY_NAME_Attribute, MFVideoFormat_H264, MFVideoFormat_NV12,
-    MFVideoInterlace_Progressive, MFSTARTUP_FULL, MFT_CATEGORY_VIDEO_DECODER,
-    MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_ASYNCMFT, MFT_ENUM_FLAG_HARDWARE,
-    MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT, MFT_ENUM_FLAG_TRANSCODE_ONLY,
-    MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
+    MFVideoInterlace_Progressive, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MFSTARTUP_FULL,
+    MFT_CATEGORY_VIDEO_DECODER, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_ASYNCMFT,
+    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
+    MFT_ENUM_FLAG_TRANSCODE_ONLY, MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     MFT_REGISTER_TYPE_INFO, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
     MF_E_TRANSFORM_TYPE_NOT_SET, MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
@@ -619,6 +620,182 @@ pub fn selftest(width: u32, height: u32) -> Result<SelfTest> {
         encoded_bytes: nal.len(),
         start_code,
         decoded_frames: frames.len(),
+        mean_abs_error,
+    })
+}
+
+/// Build an `IMFSample` wrapping `data` with the given sample time (100ns units).
+unsafe fn make_sample(data: &[u8], time: i64) -> Result<IMFSample> {
+    let buf = MFCreateMemoryBuffer(data.len() as u32).context("MFCreateMemoryBuffer")?;
+    let mut ptr = std::ptr::null_mut();
+    buf.Lock(&mut ptr, None, None).context("Lock")?;
+    std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+    buf.Unlock().ok();
+    buf.SetCurrentLength(data.len() as u32)?;
+    let sample = MFCreateSample().context("MFCreateSample")?;
+    sample.AddBuffer(&buf)?;
+    sample.SetSampleTime(time)?;
+    Ok(sample)
+}
+
+/// Pull the output sample an async MFT provides in response to a HaveOutput event. The encoder
+/// may signal MF_E_TRANSFORM_STREAM_CHANGE first (to deliver its negotiated output type with the
+/// sequence header) — re-set the output type and wait for the next HaveOutput to carry the data.
+unsafe fn read_provided_output(transform: &IMFTransform) -> Result<Vec<u8>> {
+    let mut data = [MFT_OUTPUT_DATA_BUFFER {
+        dwStreamID: 0,
+        pSample: ManuallyDrop::new(None),
+        dwStatus: 0,
+        pEvents: ManuallyDrop::new(None),
+    }];
+    let mut status = 0u32;
+    let r = transform.ProcessOutput(0, &mut data, &mut status);
+    let produced = ManuallyDrop::take(&mut data[0].pSample);
+    ManuallyDrop::drop(&mut data[0].pEvents);
+    match r {
+        Ok(()) => match produced {
+            Some(s) => sample_bytes(&s),
+            None => Ok(Vec::new()),
+        },
+        Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => {
+            let t = transform
+                .GetOutputAvailableType(0, 0)
+                .context("GetOutputAvailableType (encoder renegotiate)")?;
+            transform
+                .SetOutputType(0, &t, 0)
+                .context("SetOutputType (encoder renegotiate)")?;
+            Ok(Vec::new()) // the data arrives on the next HaveOutput event
+        }
+        Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => Ok(Vec::new()),
+        Err(e) => Err(e).context("ProcessOutput (async)"),
+    }
+}
+
+/// The async hardware H.264 encoder (QSV / NVENC / AMF). It is driven by the MFT's event
+/// generator: `METransformNeedInput` asks for a frame, `METransformHaveOutput` offers an encoded
+/// access unit (the MFT provides its own output samples), `METransformDrainComplete` ends a flush.
+pub struct AsyncH264Encoder {
+    transform: IMFTransform,
+    events: IMFMediaEventGenerator,
+    time: i64,
+    frame_duration: i64,
+}
+
+impl AsyncH264Encoder {
+    /// Build + configure the hardware async H.264 encoder (NV12 in, system memory, low-latency).
+    pub fn new_hardware(width: u32, height: u32, fps: u32, bitrate: u32) -> Result<Self> {
+        unsafe {
+            CoIncrementMTAUsage().context("CoIncrementMTAUsage")?;
+            MFStartup(MF_VERSION, MFSTARTUP_FULL).context("MFStartup")?;
+            let (transform, _name) = hardware_encoder_transform()?;
+
+            let attrs = transform.GetAttributes().context("GetAttributes")?;
+            attrs
+                .SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1)
+                .context("MF_TRANSFORM_ASYNC_UNLOCK")?;
+            let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
+
+            configure_h264_encoder_types(&transform, width, height, fps, bitrate)?;
+            let events: IMFMediaEventGenerator =
+                transform.cast().context("cast IMFMediaEventGenerator")?;
+
+            transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
+            transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
+            Ok(Self {
+                transform,
+                events,
+                time: 0,
+                frame_duration: 10_000_000i64 / fps.max(1) as i64,
+            })
+        }
+    }
+
+    /// One-shot: feed all `frames` (NV12) through the async event loop, drain, and return the
+    /// concatenated H.264 elementary stream. A streaming encode/finish wrapper is slice 4c.1c.1b.
+    pub fn encode_all(&mut self, frames: &[&[u8]]) -> Result<Vec<u8>> {
+        unsafe {
+            let mut out = Vec::new();
+            let mut next = 0usize;
+            let mut draining = false;
+            let block = MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS(0); // 0 = wait for the next event
+            for _ in 0..100_000 {
+                let ev = self.events.GetEvent(block).context("GetEvent")?;
+                let et = ev.GetType().context("GetType")?;
+                if et == METransformNeedInput.0 as u32 {
+                    if next < frames.len() {
+                        let s = make_sample(frames[next], self.time)?;
+                        s.SetSampleDuration(self.frame_duration)?;
+                        self.time += self.frame_duration;
+                        self.transform
+                            .ProcessInput(0, &s, 0)
+                            .context("ProcessInput (async)")?;
+                        next += 1;
+                    } else if !draining {
+                        self.transform
+                            .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)
+                            .context("DRAIN")?;
+                        draining = true;
+                    }
+                } else if et == METransformHaveOutput.0 as u32 {
+                    out.extend(read_provided_output(&self.transform)?);
+                } else if et == METransformDrainComplete.0 as u32 {
+                    return Ok(out);
+                }
+            }
+            anyhow::bail!("async encoder event loop did not complete")
+        }
+    }
+}
+
+/// 4c.1c.1a self-test: encode a synthetic gradient through the **async QSV** encoder, decode it
+/// back, and report the round-trip (the hardware-encoder mirror of [`selftest`]).
+pub fn selftest_qsv(width: u32, height: u32) -> Result<SelfTest> {
+    let mut bgra = vec![0u8; (width * height * 4) as usize];
+    for y in 0..height as usize {
+        for x in 0..width as usize {
+            let i = (y * width as usize + x) * 4;
+            bgra[i] = (x % 256) as u8;
+            bgra[i + 1] = (y % 256) as u8;
+            bgra[i + 2] = ((x + y) % 256) as u8;
+            bgra[i + 3] = 255;
+        }
+    }
+    let nv12 = wisp_core::color::bgra_to_nv12(&bgra, width, height);
+
+    let mut enc = AsyncH264Encoder::new_hardware(width, height, 30, 8_000_000)?;
+    let frames: Vec<&[u8]> = vec![nv12.as_slice(); 3];
+    let nal = enc.encode_all(&frames)?;
+    anyhow::ensure!(!nal.is_empty(), "QSV encoder produced no output");
+    let start_code = nal.windows(4).any(|w| w == [0, 0, 0, 1]);
+
+    let mut dec = H264Decoder::new_software(width, height, 30)?;
+    let decoded = dec.decode(&nal)?;
+    anyhow::ensure!(!decoded.is_empty(), "decoder produced no frames");
+    let expected = wisp_core::color::nv12_len(width, height);
+    let first = &decoded[0];
+    anyhow::ensure!(
+        first.len() >= expected,
+        "decoded NV12 {} < expected {}",
+        first.len(),
+        expected
+    );
+    let dec_bgra = wisp_core::color::nv12_to_bgra(&first[..expected], width, height);
+    let mut sum = 0u64;
+    for (a, b) in bgra.chunks(4).zip(dec_bgra.chunks(4)) {
+        for c in 0..3 {
+            sum += (a[c] as i32 - b[c] as i32).unsigned_abs() as u64;
+        }
+    }
+    let mean_abs_error = sum as f64 / (width as f64 * height as f64 * 3.0);
+    anyhow::ensure!(
+        mean_abs_error < 35.0,
+        "QSV round-trip MAE {mean_abs_error:.2} too high"
+    );
+
+    Ok(SelfTest {
+        encoded_bytes: nal.len(),
+        start_code,
+        decoded_frames: decoded.len(),
         mean_abs_error,
     })
 }
