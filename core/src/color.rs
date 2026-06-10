@@ -7,8 +7,9 @@
 //!
 //! NV12 layout: a full-resolution Y plane (`w*h` bytes) followed by an interleaved UV plane
 //! (`w*h/2` bytes) at half resolution — one U,V pair per 2x2 luma block. Width and height must
-//! be even (true for every monitor resolution). This is a straightforward CPU conversion; the
-//! hardware path (D3D11 video processor / GPU shader) is a later optimisation.
+//! be even (true for every monitor resolution). Fixed-point integer arithmetic (scale 1024)
+//! keeps it fast and deterministic; the GPU path (D3D11 video processor / shader) is a later
+//! optimisation that also removes this CPU cost from the per-frame pipeline.
 
 /// Bytes of NV12 for a `width`x`height` frame: `w*h` luma + `w*h/2` interleaved chroma.
 pub fn nv12_len(width: u32, height: u32) -> usize {
@@ -17,8 +18,8 @@ pub fn nv12_len(width: u32, height: u32) -> usize {
 }
 
 #[inline]
-fn clamp8(x: f32) -> u8 {
-    x.round().clamp(0.0, 255.0) as u8
+fn clamp8(x: i32) -> u8 {
+    x.clamp(0, 255) as u8
 }
 
 /// Convert a BGRA8 frame to NV12 (BT.709 full-range). `width` and `height` must be even.
@@ -30,34 +31,34 @@ pub fn bgra_to_nv12(bgra: &[u8], width: u32, height: u32) -> Vec<u8> {
     let mut out = vec![0u8; nv12_len(width, height)];
     let (y_plane, uv_plane) = out.split_at_mut(w * h);
 
-    // Luma, per pixel.
+    // Luma, per pixel (BT.709 full-range, fixed-point scale 1024; +512 rounds to nearest).
     for y in 0..h {
         for x in 0..w {
             let i = (y * w + x) * 4;
-            let b = bgra[i] as f32;
-            let g = bgra[i + 1] as f32;
-            let r = bgra[i + 2] as f32;
-            y_plane[y * w + x] = clamp8(0.2126 * r + 0.7152 * g + 0.0722 * b);
+            let b = bgra[i] as i32;
+            let g = bgra[i + 1] as i32;
+            let r = bgra[i + 2] as i32;
+            y_plane[y * w + x] = clamp8((218 * r + 732 * g + 74 * b + 512) >> 10);
         }
     }
 
-    // Chroma, averaged over each 2x2 block.
+    // Chroma, averaged over each 2x2 block (>>12 = scale 1024 then /4; +2048 rounds to nearest).
     let cw = w / 2;
     for cy in 0..h / 2 {
         for cx in 0..cw {
-            let (mut su, mut sv) = (0.0f32, 0.0f32);
+            let (mut sr, mut sg, mut sb) = (0i32, 0i32, 0i32);
             for dy in 0..2 {
                 for dx in 0..2 {
                     let i = ((cy * 2 + dy) * w + (cx * 2 + dx)) * 4;
-                    let b = bgra[i] as f32;
-                    let g = bgra[i + 1] as f32;
-                    let r = bgra[i + 2] as f32;
-                    su += -0.1146 * r - 0.3854 * g + 0.5 * b + 128.0;
-                    sv += 0.5 * r - 0.4542 * g - 0.0458 * b + 128.0;
+                    sb += bgra[i] as i32;
+                    sg += bgra[i + 1] as i32;
+                    sr += bgra[i + 2] as i32;
                 }
             }
-            uv_plane[(cy * cw + cx) * 2] = clamp8(su / 4.0);
-            uv_plane[(cy * cw + cx) * 2 + 1] = clamp8(sv / 4.0);
+            let u = (((-117 * sr - 395 * sg + 512 * sb) + 2048) >> 12) + 128;
+            let v = (((512 * sr - 465 * sg - 47 * sb) + 2048) >> 12) + 128;
+            uv_plane[(cy * cw + cx) * 2] = clamp8(u);
+            uv_plane[(cy * cw + cx) * 2 + 1] = clamp8(v);
         }
     }
     out
@@ -76,16 +77,17 @@ pub fn nv12_to_bgra(nv12: &[u8], width: u32, height: u32) -> Vec<u8> {
     let (y_plane, uv_plane) = nv12.split_at(w * h);
     let cw = w / 2;
     let mut out = vec![0u8; w * h * 4];
+    // BT.709 full-range inverse, fixed-point scale 1024 (+512 rounds to nearest).
     for y in 0..h {
         for x in 0..w {
-            let yy = y_plane[y * w + x] as f32;
+            let yy = y_plane[y * w + x] as i32;
             let uvi = ((y / 2) * cw + (x / 2)) * 2;
-            let u = uv_plane[uvi] as f32 - 128.0;
-            let v = uv_plane[uvi + 1] as f32 - 128.0;
+            let u = uv_plane[uvi] as i32 - 128;
+            let v = uv_plane[uvi + 1] as i32 - 128;
             let o = (y * w + x) * 4;
-            out[o] = clamp8(yy + 1.8556 * u); // B
-            out[o + 1] = clamp8(yy - 0.1873 * u - 0.4681 * v); // G
-            out[o + 2] = clamp8(yy + 1.5748 * v); // R
+            out[o] = clamp8(yy + ((1900 * u + 512) >> 10)); // B
+            out[o + 1] = clamp8(yy - ((192 * u + 479 * v + 512) >> 10)); // G
+            out[o + 2] = clamp8(yy + ((1613 * v + 512) >> 10)); // R
             out[o + 3] = 255; // A
         }
     }
