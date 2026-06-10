@@ -25,7 +25,7 @@ use windows::Win32::Media::MediaFoundation::{
     MFT_REGISTER_TYPE_INFO, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
     MF_E_TRANSFORM_TYPE_NOT_SET, MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
     MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE,
-    MF_VERSION,
+    MF_TRANSFORM_ASYNC, MF_TRANSFORM_ASYNC_UNLOCK, MF_VERSION,
 };
 use windows::Win32::System::Com::{CoIncrementMTAUsage, CoTaskMemFree};
 
@@ -146,6 +146,104 @@ unsafe fn software_encoder_transform() -> Result<IMFTransform> {
         .context("ActivateObject IMFTransform")
 }
 
+/// Configure an H.264 encoder MFT's output (H.264) then input (NV12) media types. The output
+/// type MUST be set before the input type per the encoder MFT contract.
+unsafe fn configure_h264_encoder_types(
+    transform: &IMFTransform,
+    width: u32,
+    height: u32,
+    fps: u32,
+    bitrate: u32,
+) -> Result<()> {
+    let out = MFCreateMediaType().context("MFCreateMediaType (output)")?;
+    out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+    out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
+    out.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
+    out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+    out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
+    out.SetUINT64(&MF_MT_FRAME_SIZE, pack_u32x2(width, height))?;
+    out.SetUINT64(&MF_MT_FRAME_RATE, pack_u32x2(fps, 1))?;
+    transform
+        .SetOutputType(0, &out, 0)
+        .context("SetOutputType")?;
+
+    let inp = MFCreateMediaType().context("MFCreateMediaType (input)")?;
+    inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
+    inp.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
+    inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
+    inp.SetUINT64(&MF_MT_FRAME_SIZE, pack_u32x2(width, height))?;
+    inp.SetUINT64(&MF_MT_FRAME_RATE, pack_u32x2(fps, 1))?;
+    transform.SetInputType(0, &inp, 0).context("SetInputType")?;
+    Ok(())
+}
+
+/// Activate the first hardware async H.264 encoder MFT (QSV / NVENC / AMF). Returns the
+/// transform and its friendly name.
+unsafe fn hardware_encoder_transform() -> Result<(IMFTransform, String)> {
+    let output = MFT_REGISTER_TYPE_INFO {
+        guidMajorType: MFMediaType_Video,
+        guidSubtype: MFVideoFormat_H264,
+    };
+    let mut activates: *mut Option<IMFActivate> = std::ptr::null_mut();
+    let mut count = 0u32;
+    MFTEnumEx(
+        MFT_CATEGORY_VIDEO_ENCODER,
+        MFT_ENUM_FLAG_HARDWARE | MFT_ENUM_FLAG_ASYNCMFT | MFT_ENUM_FLAG_SORTANDFILTER,
+        None,
+        Some(&output),
+        &mut activates,
+        &mut count,
+    )
+    .context("MFTEnumEx (hardware H.264 encoder)")?;
+    anyhow::ensure!(
+        count > 0 && !activates.is_null(),
+        "no hardware H.264 encoder MFT"
+    );
+
+    let first: Option<IMFActivate> = std::ptr::read(activates);
+    for i in 1..count as usize {
+        let _drop: Option<IMFActivate> = std::ptr::read(activates.add(i));
+    }
+    CoTaskMemFree(Some(activates as *const _));
+
+    let act = first.context("null IMFActivate")?;
+    let name = friendly_name(&act).unwrap_or_else(|| "<unknown>".into());
+    let transform = act
+        .ActivateObject::<IMFTransform>()
+        .context("ActivateObject IMFTransform (hardware)")?;
+    Ok((transform, name))
+}
+
+/// 4c.1c.0 probe: instantiate the hardware async H.264 encoder (QSV), async-unlock it, and
+/// confirm it accepts NV12 -> H.264 configuration in system-memory mode (no D3D device manager).
+/// Returns a one-line description; an error tells us what the async encode loop (4c.1c.1) must
+/// add (e.g. a D3D11 device manager).
+pub fn probe_hardware_encoder(width: u32, height: u32, fps: u32, bitrate: u32) -> Result<String> {
+    unsafe {
+        CoIncrementMTAUsage().context("CoIncrementMTAUsage")?;
+        MFStartup(MF_VERSION, MFSTARTUP_FULL).context("MFStartup")?;
+        let (transform, name) = hardware_encoder_transform()?;
+
+        let attrs = transform.GetAttributes().context("GetAttributes")?;
+        let is_async = attrs.GetUINT32(&MF_TRANSFORM_ASYNC).unwrap_or(0);
+        attrs
+            .SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1)
+            .context("MF_TRANSFORM_ASYNC_UNLOCK")?;
+        let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
+
+        configure_h264_encoder_types(&transform, width, height, fps, bitrate)
+            .context("configure NV12->H.264 (system memory)")?;
+        let info = transform
+            .GetOutputStreamInfo(0)
+            .context("GetOutputStreamInfo")?;
+        let provides = info.dwFlags & (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32) != 0;
+        Ok(format!(
+            "{name}: async={is_async}, accepts NV12->H.264 in system memory, out_size={}, provides_samples={provides}",
+            info.cbSize
+        ))
+    }
+}
+
 /// A synchronous H.264 encoder MFT configured for NV12 input. Feed NV12 frames with
 /// [`H264Encoder::encode`]; flush the tail with [`H264Encoder::drain`]. Output is the raw
 /// H.264 elementary stream (Annex-B) produced by the MFT.
@@ -170,27 +268,7 @@ impl H264Encoder {
                 let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
             }
 
-            // Output type MUST be set before the input type for an H.264 encoder MFT.
-            let out = MFCreateMediaType().context("MFCreateMediaType (output)")?;
-            out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
-            out.SetUINT32(&MF_MT_AVG_BITRATE, bitrate)?;
-            out.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            out.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main.0 as u32)?;
-            out.SetUINT64(&MF_MT_FRAME_SIZE, pack_u32x2(width, height))?;
-            out.SetUINT64(&MF_MT_FRAME_RATE, pack_u32x2(fps, 1))?;
-            transform
-                .SetOutputType(0, &out, 0)
-                .context("SetOutputType")?;
-
-            // Input type: NV12.
-            let inp = MFCreateMediaType().context("MFCreateMediaType (input)")?;
-            inp.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            inp.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_NV12)?;
-            inp.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive.0 as u32)?;
-            inp.SetUINT64(&MF_MT_FRAME_SIZE, pack_u32x2(width, height))?;
-            inp.SetUINT64(&MF_MT_FRAME_RATE, pack_u32x2(fps, 1))?;
-            transform.SetInputType(0, &inp, 0).context("SetInputType")?;
+            configure_h264_encoder_types(&transform, width, height, fps, bitrate)?;
 
             let info = transform
                 .GetOutputStreamInfo(0)

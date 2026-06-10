@@ -56,6 +56,16 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Hardware (QSV) async-encoder config probe (ADR-0011 4c.1c.0): instantiate the QSV encoder,
+    // async-unlock it, and confirm it accepts NV12->H.264 in system memory (no D3D manager).
+    if std::env::args().any(|a| a == "--probe-qsv") {
+        match h264::probe_hardware_encoder(1920, 1080, 30, 8_000_000) {
+            Ok(desc) => println!("[host] QSV encoder OK: {desc}"),
+            Err(e) => println!("[host] QSV encoder probe failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     // H.264 encode self-test (ADR-0011 4c.1b): `host-windows.exe --selftest-h264`. Encodes a
     // synthetic frame through the software MFT and reports the H.264 output.
     if std::env::args().any(|a| a == "--selftest-h264") {
