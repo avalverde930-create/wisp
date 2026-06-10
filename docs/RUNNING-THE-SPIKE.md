@@ -7,8 +7,10 @@ PC from another on the same LAN.
 
 The transport is now **real end-to-end encryption**: a Noise handshake authenticates the
 two devices by their long-term keys, derives a session AEAD, and prints a 6-digit SAS you
-compare out-of-band on first contact. The media path is still the Phase-0a GDI/LZ4/softbuffer
-pipeline (hardware H.264 + WGC capture is Phase-0b — see the table below).
+compare out-of-band on first contact. The media path has grown Phase-0b options behind
+environment variables: **WGC** native-resolution capture (`WISP_CAPTURE=wgc`) and **H.264**
+video (`WISP_CODEC=h264`) alongside the default GDI capture + LZ4 interframe codec. The render
+path is still softbuffer (wgpu is the remaining 0b item). See "Capture & codec options" below.
 
 > ⚠️ **Still a spike in two respects** (neither is the security boundary anymore):
 > 1. The QUIC TLS layer uses a **throwaway self-signed cert with verification skipped**.
@@ -106,6 +108,26 @@ Phase-2 session-0 helper's job).
 netsh advfirewall firewall add rule name="Wisp UDP 9000" dir=in action=allow protocol=UDP localport=9000 profile=private
 ```
 
+#### Capture & codec options (host-side env vars)
+
+Both default to the safe, lowest-dependency path; set them before launching the host.
+
+| Variable | Default | Set to `…` | Effect |
+|---|---|---|---|
+| `WISP_CAPTURE` | GDI (DPI-scaled logical res) | `wgc` | Windows.Graphics.Capture at the monitor's **native** resolution (ADR-0011 4b). Falls back to GDI if WGC init fails. |
+| `WISP_CODEC` | LZ4 interframe — GOP keyframe + XOR delta (4a) | `h264` | Media Foundation **H.264**, software MFT, low-latency (4c) — far smaller on the wire. Falls back to LZ4 if H.264 is unavailable. |
+
+```powershell
+# example: native-resolution WGC capture + H.264 on the wire
+$env:WISP_CAPTURE = 'wgc'; $env:WISP_CODEC = 'h264'
+target\release\host-windows.exe 0.0.0.0:9000
+```
+
+Host diagnostics (run and exit): `--probe-wgc` (WGC init + monitor size), `--probe-h264` (list
+H.264 encoder MFTs), `--selftest-h264` (encode→decode round-trip), `--selftest-capture` (real
+capture → H.264). The client decodes whichever codec each frame's header declares — no client
+flag needed.
+
 ### 2. Client (the PC you control *from*)
 
 ```powershell
@@ -142,17 +164,26 @@ target\release\client.exe <HOST-IP>:9000 --bench
 | **Key pinning** (host pins clients, client pins hosts) | — |
 | **IK 0-RTT reconnect** (cached host key) | — |
 | **Persistent device identity, DPAPI-wrapped at rest** (ADR-0009) | OS-keystore on macOS/Android; recovery-code slot (**Phase 1+**) |
-| GDI full-frame capture (primary monitor) | WGC capture + dirty-rects (**0b**) |
-| LZ4 frame compression | Hardware H.264 NVENC/QSV/AMF, x264 floor (**0b**) |
-| softbuffer CPU render (scaled) | wgpu GPU render path (**0b**) |
+| GDI **and** WGC capture (`WISP_CAPTURE`, native-res) — 4b | Dirty-rects / damage regions (**0b**) |
+| LZ4 interframe (GOP + XOR delta, 4a) **and** H.264 (`WISP_CODEC`, 4c) | Hardware QSV/NVENC/AMF **async** encode + GPU colour convert (**0b**) |
+| softbuffer CPU render (scaled) | wgpu GPU render path + zero-copy (**0b**) |
 | Mouse move/click/scroll + keyboard via `SendInput` | Clipboard, file transfer, audio, multi-monitor (**Phase 1+**) |
 | LAN direct connect | Outbound rendezvous + NAT traversal + relay (**Phase 2**) |
 | Latency numbers (fps + RTT) | UAC / lock-screen control via session-0 helper (**Phase 2**) |
 
 ## Measured (local loopback, release)
 
-~13–23 fps @ 1536×864–1920×1080, RTT a few ms, ~0.5–0.6 MiB/frame on the wire, decode
-integrity verified, Noise E2E with SAS match, IK 0-RTT reconnect on the second connect. The
-fps ceiling is the GDI full-frame + software-LZ4 path — exactly what **Phase-0b** (WGC +
-hardware H.264 + GPU zero-copy + dirty-rects) exists to fix, targeting 30–60 fps at < 50 ms
-glass-to-glass.
+Per-frame wire size by codec (mostly-static 1536×864 desktop, decode integrity verified every
+frame):
+
+| Codec | Bytes/frame | |
+|---|---|---|
+| raw LZ4 full-frame (Phase-0a) | ~165 KiB | baseline |
+| LZ4 interframe (4a, **default**) | ~22 KiB | GOP keyframe + XOR delta |
+| H.264 software (4c, `WISP_CODEC=h264`) | ~5 KiB | low-latency MFT |
+
+Frame rate (both processes sharing one CPU on loopback): ~20 fps GDI + LZ4 interframe, ~11 fps
+GDI + software H.264, ~6 fps WGC native-4K + LZ4. Noise E2E with SAS match; IK 0-RTT reconnect
+on later connects. The ceiling now is **software encode + CPU colour conversion**, not bandwidth
+— exactly what the remaining **0b** work (hardware QSV async encode, wgpu GPU render + zero-copy
+colour) targets to reach 30–60 fps at < 50 ms glass-to-glass.
