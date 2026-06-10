@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 wisp-core = { path = "../../core" }
+wisp-media-win = { path = "../../media/media-windows" }
 tokio.workspace = true
 quinn.workspace = true
 tracing.workspace = true
@@ -36,6 +37,4 @@ windows = { version = "0.58", features = [
     "Win32_System_WinRT",
     "Win32_System_WinRT_Direct3D11",
     "Win32_System_WinRT_Graphics_Capture",
-    # Hardware H.264 encode (ADR-0011 4c)
-    "Win32_Media_MediaFoundation",
 ] }

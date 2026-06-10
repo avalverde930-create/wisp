@@ -17,8 +17,9 @@
 mod capture;
 mod capture_wgc;
 mod connection;
-mod h264;
 mod inject;
+
+use wisp_media_win::h264;
 
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};

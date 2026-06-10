@@ -724,6 +724,7 @@ dependencies = [
  "tracing-subscriber",
  "windows",
  "wisp-core",
+ "wisp-media-win",
 ]
 
 [[package]]
@@ -2808,6 +2809,15 @@ dependencies = [
  "tokio",
  "tracing",
  "windows",
+]
+
+[[package]]
+name = "wisp-media-win"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "windows",
+ "wisp-core",
 ]
 
 [[package]]

@@ -1,0 +1,19 @@
+[package]
+name = "wisp-media-win"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+# Windows-only media codec glue (Media Foundation H.264 encode/decode), shared by the
+# host (encoder) and client (decoder). Cross-platform pieces (NV12 colour, wire) stay in
+# wisp-core; this crate is the platform boundary. ADR-0011 4c.
+[dependencies]
+wisp-core = { path = "../../core" }
+anyhow.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_Media_MediaFoundation",
+    "Win32_System_Com",
+] }
