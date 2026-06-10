@@ -1,0 +1,20 @@
+[package]
+name = "srd-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+rcgen.workspace = true
+lz4_flex.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Phase 1 adds: snow (Noise XX->IK), ring/serde as needed.
+# In Phase 2-3 this crate splits into core/protocol-types, core/crypto, core/transport,
+# core/session, core/media, core/identity, core/audit, core/telemetry. Until compile times
+# hurt or a second binary needs a subset, ONE crate with modules is correct.

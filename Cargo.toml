@@ -1,0 +1,47 @@
+[workspace]
+resolver = "2"
+members = [
+    "core",
+    "host/host-core",
+    "host/host-windows",
+    "client",
+]
+# DEFERRED members (create when the phase arrives — see docs/ROADMAP.md ledger):
+#   Phase 2: host/host-windows-helper, services/signaling, services/relay-ctl
+#   Phase 2-3: split core into core/protocol-types, core/crypto, core/transport,
+#              core/session, core/media, core/identity, core/audit, core/telemetry;
+#              crates/workspace-hack
+#   v1.0: services/identity, services/api-gateway
+#   Phase 3: bindings/uniffi-mobile, bindings/wasm, apps/desktop/src-tauri
+
+[workspace.package]
+edition = "2021"
+license = "SEE LICENSE FILE"
+repository = ""
+
+# Single-version policy: pin every shared dependency here so the whole
+# workspace resolves one version (no diamond conflicts).
+#
+# CRYPTO PROVIDER: we force the `ring` provider across quinn/rustls/rcgen so the
+# build needs only the MSVC C compiler (no cmake/nasm/Go that aws-lc-rs wants).
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring", "log"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging"] }
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "ring", "pem"] }  # spike: throwaway self-signed cert
+snow = "0.9"            # Noise (XX first contact -> cached IK reconnect; NO XXfallback) — Phase 1
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+lz4_flex = "0.11"       # Phase-0a frame compression (replaced by HW H.264 in 0b)
+softbuffer = "0.4"      # Phase-0a CPU present (replaced by wgpu in 0b)
+wgpu = "22"             # Phase-0b GPU render path
+winit = "0.30"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+thiserror = "1"
+anyhow = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

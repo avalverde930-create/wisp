@@ -1,0 +1,39 @@
+Secure Remote Desktop — LICENSE (INTERIM)
+
+Copyright (c) 2026 Alexander Valverde. All rights reserved.
+
+STATUS — OPEN DECISION
+----------------------
+The final license for this project (open-source vs. proprietary, and which
+license) is an OPEN BUSINESS DECISION. See docs/PROJECT-PLAN.md §11 (Open
+Questions — monetization / licensing) and docs/ROADMAP.md. Until that decision
+is recorded in an Architecture Decision Record under docs/adr/, this repository
+is distributed under the following INTERIM terms.
+
+INTERIM TERMS
+-------------
+All rights reserved. No license, express or implied, is granted to any party to
+use, copy, modify, distribute, sublicense, or create derivative works of this
+software or its source code, except by separate written agreement with the
+copyright holder.
+
+WHY AN INTERIM "ALL RIGHTS RESERVED" NOTICE
+-------------------------------------------
+Choosing an open-source license is a one-way door: it cannot be revoked for code
+already released. An interim "all rights reserved" posture is fully reversible —
+the project can be relicensed to any license (a permissive license such as
+MIT/Apache-2.0, or a copyleft license) once the monetization model is decided.
+Starting permissive-and-public would foreclose options that starting closed
+keeps open.
+
+This project deliberately does NOT fork RustDesk (which is AGPL-3.0); it
+references the hbbs/hbbr rendezvous+relay topology only as a clean-room
+architectural reference. See docs/TECH-STACK.md ("Do NOT fork RustDesk").
+
+NO WARRANTY
+-----------
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM THE USE
+OF THE SOFTWARE.

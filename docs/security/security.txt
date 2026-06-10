@@ -1,0 +1,10 @@
+# Secure Remote Desktop — security.txt (RFC 9116)
+# PLACEHOLDER: replace <domain> and the Expires date before publishing.
+# When live, serve this at https://<domain>/.well-known/security.txt (signed).
+
+Contact: mailto:security@<domain>
+Encryption: https://<domain>/.well-known/pgp-key.asc
+Policy: https://<domain>/.well-known/disclosure-sla
+Preferred-Languages: en
+Canonical: https://<domain>/.well-known/security.txt
+Expires: 2027-06-09T00:00:00.000Z

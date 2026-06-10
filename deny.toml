@@ -1,0 +1,21 @@
+# cargo-deny configuration. Run: cargo deny check
+
+[advisories]
+yanked = "deny"
+# Unmaintained/vulnerable crates fail the build.
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "ISC", "BSD-2-Clause", "BSD-3-Clause", "Unicode-DFS-2016"]
+# AGPL/GPL are intentionally NOT allowed — this is a proprietary, network-served product.
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+# Dependency-direction: while Rust is the only language, Cargo's compile-time cycle ban
+# + the banned crate-level edges below enforce proto/wire -> core -> {host,client,services}
+# for free. The bespoke graph gate (tools/) is introduced in Phase 3 with the TS side.
+# [[bans.deny]] edges (e.g. core depending on host-*) are added here as core splits.
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

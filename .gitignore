@@ -1,0 +1,43 @@
+# Rust
+/target/
+**/target/
+Cargo.lock.bak
+
+# Generated protocol code (Phase 2+, regenerated via `just gen`)
+core/src/gen/
+
+# Secrets — NEVER commit unencrypted (use SOPS+age)
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+/secrets/
+secrets.dec.*
+
+# Infra (Phase 2+)
+infra/terraform/**/.terraform/
+infra/terraform/**/*.tfstate
+infra/terraform/**/*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# Logs / coverage
+*.log
+coverage/
+
+# Node / TS — reserved for Phase 3 (no TS toolchain in MVP)
+node_modules/
+dist/
+.turbo/
+*.tsbuildinfo
+.pnpm-store/

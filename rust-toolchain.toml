@@ -1,0 +1,10 @@
+[toolchain]
+# Bumped from 1.83.0: transitive deps (e.g. `time` 0.3.47) now require edition2024
+# (Rust 1.85+). 1.96.0 is the verified-building stable on the dev machine.
+channel = "1.96.0"
+components = ["rustfmt", "clippy", "rust-src"]
+targets = [
+    "x86_64-pc-windows-msvc",
+]
+# DEFERRED targets (add with their phase): aarch64-apple-ios, aarch64-linux-android,
+# wasm32-unknown-unknown (Phase 3); x86_64-apple-darwin / x86_64-unknown-linux-gnu (Phase 3 hosts).
