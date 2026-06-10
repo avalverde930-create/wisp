@@ -9,10 +9,10 @@ use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use srd_core::codec;
-use srd_core::transport;
-use srd_core::wire::{FrameCodec, FrameHeader, InputEvent, MouseButton};
 use tokio::sync::mpsc;
+use wisp_core::codec;
+use wisp_core::transport;
+use wisp_core::wire::{FrameCodec, FrameHeader, InputEvent, MouseButton};
 
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
@@ -271,12 +271,12 @@ async fn main() -> Result<()> {
 
     // P1 guardrail: a non-loopback bind requires a shared token on BOTH ends, so a
     // LAN bind can never silently accept unauthenticated input injection.
-    let token = std::env::var("SRD_SPIKE_TOKEN").ok();
+    let token = std::env::var("WISP_TOKEN").ok();
     if !bind.ip().is_loopback() && token.is_none() {
         anyhow::bail!(
             "Refusing to bind {bind} (non-loopback) without a shared token.\n  \
-             Set SRD_SPIKE_TOKEN on BOTH host and client first, e.g. (PowerShell):\n      \
-             $env:SRD_SPIKE_TOKEN = 'choose-a-strong-secret'\n  \
+             Set WISP_TOKEN on BOTH host and client first, e.g. (PowerShell):\n      \
+             $env:WISP_TOKEN = 'choose-a-strong-secret'\n  \
              This is a spike guardrail against casual LAN access — NOT real security \
              (that is the Phase-1 Noise + SAS pairing)."
         );
@@ -284,12 +284,12 @@ async fn main() -> Result<()> {
 
     let (w, h) = primary_size();
     let endpoint = transport::server_endpoint(bind)?;
-    println!("[host] Secure Remote Desktop spike host");
+    println!("[host] Wisp spike host");
     println!("[host] primary monitor: {w}x{h}");
-    println!("[host] listening on {bind} (ALPN srd-spike/0) - waiting for a client...");
+    println!("[host] listening on {bind} (ALPN wisp/0) - waiting for a client...");
     match &token {
-        Some(_) => println!("[host] auth: shared token REQUIRED (SRD_SPIKE_TOKEN)"),
-        None => println!("[host] auth: NONE (loopback only; set SRD_SPIKE_TOKEN to allow LAN)"),
+        Some(_) => println!("[host] auth: shared token REQUIRED (WISP_TOKEN)"),
+        None => println!("[host] auth: NONE (loopback only; set WISP_TOKEN to allow LAN)"),
     }
     println!("[host] NOTE: interactive session only; UAC / lock screen out of scope (ADR-0010).");
 

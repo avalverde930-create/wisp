@@ -23,7 +23,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, Serve
 use crate::wire::{FrameHeader, InputEvent, WireError};
 
 /// ALPN id for the spike protocol.
-pub const ALPN: &[u8] = b"srd-spike/0";
+pub const ALPN: &[u8] = b"wisp/0";
 
 fn ring_provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::ring::default_provider())

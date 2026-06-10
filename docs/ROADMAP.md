@@ -24,7 +24,7 @@ UniFFI (iOS SwiftUI / Android Compose) + wasm-bindgen+webrtc-rs (web). Now the T
 **Exit:** >=3 new client platforms with view+control parity; **web works on Chromium-family browsers; Safari/iOS-web is gated on a WebKit Encoded-Transform compatibility spike (Open Q #13) — supported iff the spike confirms a working Encoded Transform + SFrame path, otherwise served by the native iOS client**; one non-Windows host at Phase-1 capability behind a flag; no client weakens crypto/pairing.
 
 ## Phase 4 — Polish, scale, optional SaaS
-AV1 where available, GPU-decode clients, 4K/120; autoscaling, SLOs, tracing, runbooks, automated cert rotation; optional SaaS (orgs, RBAC, device inventory, exportable audit logs, signed offline self-host licenses, OPAQUE account login, billing); consent-based assist-others (time-boxed, logged, architecturally distinct); pen-test, bug bounty, SLSA L3 attestation, SOC 2 Type 2 (when procurement asks); cross-device audit anchoring; FIDO2 attestation (srd/v2).
+AV1 where available, GPU-decode clients, 4K/120; autoscaling, SLOs, tracing, runbooks, automated cert rotation; optional SaaS (orgs, RBAC, device inventory, exportable audit logs, signed offline self-host licenses, OPAQUE account login, billing); consent-based assist-others (time-boxed, logged, architecturally distinct); pen-test, bug bounty, SLSA L3 attestation, SOC 2 Type 2 (when procurement asks); cross-device audit anchoring; FIDO2 attestation (wisp/v2).
 **Exit:** SLOs met under load; relay/signaling scale horizontally; signed auto-updates; pen test passed, no open criticals; self-host path documented and working; assist-others behind explicit opt-in.
 
 ## Deferred-slot ledger (reserved, NOT deleted)
@@ -41,4 +41,4 @@ AV1 where available, GPU-decode clients, 4K/120; autoscaling, SLOs, tracing, run
 | infra/terraform | Tier 1 |
 | infra/{k8s,ansible} | Tier 2 |
 | tests/{e2e,load} | Phase 3 / Tier 1 |
-| SFrame; cross-device audit anchoring; FIDO2 attestation; capability tokens | Phase 3-4 / srd/v2 |
+| SFrame; cross-device audit anchoring; FIDO2 attestation; capability tokens | Phase 3-4 / wisp/v2 |

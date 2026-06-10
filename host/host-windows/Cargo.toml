@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-srd-core = { path = "../../core" }
+wisp-core = { path = "../../core" }
 tokio.workspace = true
 quinn.workspace = true
 tracing.workspace = true

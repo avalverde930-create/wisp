@@ -215,11 +215,11 @@ dependencies = [
  "anyhow",
  "quinn",
  "softbuffer",
- "srd-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "winit",
+ "wisp-core",
 ]
 
 [[package]]
@@ -527,10 +527,10 @@ name = "host-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "srd-core",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+ "wisp-core",
 ]
 
 [[package]]
@@ -539,11 +539,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "quinn",
- "srd-core",
  "tokio",
  "tracing",
  "tracing-subscriber",
  "windows",
+ "wisp-core",
 ]
 
 [[package]]
@@ -1705,20 +1705,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "srd-core"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "lz4_flex",
- "quinn",
- "rcgen",
- "rustls",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "strict-num"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2536,6 +2522,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0592e1c9d151f854e6fd382574c3a0855250e1d9b2f99d9281c6e6391af352f1"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "wisp-core"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "lz4_flex",
+ "quinn",
+ "rcgen",
+ "rustls",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

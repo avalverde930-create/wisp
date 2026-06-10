@@ -1,4 +1,4 @@
-# Secure Remote Desktop — Master Project Plan (Final, Build-Ready)
+# Wisp — Master Project Plan (Final, Build-Ready)
 
 > **Repo home:** `03 TECHNOLOGY/Secure Remote Desktop/` — a root-level technology domain, deliberately **outside** the `01 LEGAL/` perimeter. This codebase holds no client-sensitive legal data; the DMS folder rules and the `YYYY-MM-DD` file-naming convention do **not** apply (source trees are exempt per root `CLAUDE.md`). All paths in this repo are relative to the repo root; never assume a drive letter.
 
@@ -46,7 +46,7 @@ Where specialists or reviewers disagreed, the chosen direction is stated explici
 - Secure-by-default everything: no naked ports, **signed binaries via Azure Trusted Signing from day one** (with explicit SmartScreen-reputation caveat, §6.4), host audit log of every connection, deny-by-default capabilities (view-only until escalated).
 - **Explicit MVP limitation, documented in-product:** cannot view or control the UAC/secure-desktop/lock screen — any elevated window silently halts control. The session-0 helper that fixes this is a Phase-2 deliverable (§4.3, §8).
 
-**Deferred OUT of the MVP (panel over-engineering findings — reserved, not deleted):** OPAQUE account login (→ v1.0 accounts); per-frame SFrame ratchet (→ ships with the browser/relay-forwarding path, Phase 3); `services/api-gateway` as a distinct tier (→ Tier 2); cross-device audit-log anchoring (→ v1.0, needs a 2nd device); FIDO2 attestation + capability *tokens* in the schema (→ `srd/v2`); the full TS/pnpm/Turborepo toolchain (→ Phase 3, app #2); buf dual-language codegen (→ when a 2nd language consumes the protocol); the 7-crate `core/` split, `cargo-hakari`, and the bespoke `check-dep-direction.sh` gate (→ when the workspace and a second consumer make them earn their keep).
+**Deferred OUT of the MVP (panel over-engineering findings — reserved, not deleted):** OPAQUE account login (→ v1.0 accounts); per-frame SFrame ratchet (→ ships with the browser/relay-forwarding path, Phase 3); `services/api-gateway` as a distinct tier (→ Tier 2); cross-device audit-log anchoring (→ v1.0, needs a 2nd device); FIDO2 attestation + capability *tokens* in the schema (→ `wisp/v2`); the full TS/pnpm/Turborepo toolchain (→ Phase 3, app #2); buf dual-language codegen (→ when a 2nd language consumes the protocol); the 7-crate `core/` split, `cargo-hakari`, and the bespoke `check-dep-direction.sh` gate (→ when the workspace and a second consumer make them earn their keep).
 
 ### v1.0 — "A real product"
 - Self-hosting bundle: one `docker-compose` deploy of signaling + coturn/eturnal relay, secure defaults, identical binaries to hosted, server-key pinning.
@@ -62,7 +62,7 @@ Where specialists or reviewers disagreed, the chosen direction is stated explici
 - AV1 hardware-encode maturity (RTX 40+/Arc/RDNA4 dual encoders), 4K/120, HDR.
 - Wake-on-LAN / remote power, remote print, USB redirection.
 - MSP/fleet management, SSO/SCIM, SIEM export.
-- FIDO2 device attestation, TPM/Secure-Enclave key binding, just-in-time brokered ephemeral enterprise sessions (`srd/v2` schema).
+- FIDO2 device attestation, TPM/Secure-Enclave key binding, just-in-time brokered ephemeral enterprise sessions (`wisp/v2` schema).
 
 ---
 
@@ -154,7 +154,7 @@ GPU texture handles stay opaque behind the interface; zero-copy lives *inside* e
 - **Recovery (gap closed — moved into the design now, even if implemented later):** with non-exportable secure-element keys + zero-knowledge servers, losing the only paired device = permanent host lockout. Reserve the design space **now** (a slot in `core/identity` and the wire schema) for an **enrollment-time offline recovery code** so it is a designed, non-backdoor path — not a late bolt-on that becomes the backdoor the threat model forbids. Implemented in Phase 2 with the key hierarchy frozen; the recovery slot is reserved before the hierarchy freezes.
 
 ### 4.4 Authorization, consent, audit
-- **Deny-by-default capability model**, not a binary "connected": `VIEW` / `CONTROL` / `CLIPBOARD` / `FILE_TRANSFER` / `AUDIO` / `MULTI_MONITOR` as separate grants; default **view-only**; every escalation is a separate explicit grant. The grant table is designed now with `expires_at` / `consent_proof` for the future "assist others" case so it never needs migration. **(Note: the *grant table* is in `srd/v1`; *capability tokens* and *FIDO2 attestation* are deferred to `srd/v2` to avoid freezing a half-specified security schema.)**
+- **Deny-by-default capability model**, not a binary "connected": `VIEW` / `CONTROL` / `CLIPBOARD` / `FILE_TRANSFER` / `AUDIO` / `MULTI_MONITOR` as separate grants; default **view-only**; every escalation is a separate explicit grant. The grant table is designed now with `expires_at` / `consent_proof` for the future "assist others" case so it never needs migration. **(Note: the *grant table* is in `wisp/v1`; *capability tokens* and *FIDO2 attestation* are deferred to `wisp/v2` to avoid freezing a half-specified security schema.)**
 - **Explicit, scoped, time-boxed consent** with a **non-spoofable in-session indicator** (OS-controlled tray + persistent banner) showing who is connected, which capabilities are live, and a **one-click kill switch** (+ global hotkey). Unattended access off by default, gated by the secure element.
 - **Append-only, hash-chained audit log** on the host (session start/stop, peer key fingerprint + **key-storage class**, capabilities, file transfers, failed/declined attempts, revocations). **Kept strictly local — never shipped to relay or cloud** (also satisfies the LEGAL-perimeter constraint should the tool ever reach a host holding client data). **Module home (gap closed):** the audit log is a named security asset with an integrity model (hash-chain) easy to get subtly wrong — it gets a dedicated module **`core/audit`**, CODEOWNERS-gated alongside `core/crypto`, not an afterthought field on a session struct. **Cross-device anchoring** of periodic log-head hashes to the owner's other devices is **deferred to v1.0** (it needs a second paired device + sync channel the MVP doesn't have; it is security theater until then).
 
@@ -296,7 +296,7 @@ Client shells over the Rust core via **UniFFI** (iOS SwiftUI / Android Compose) 
 **Exit:** ≥3 new client platforms ship view+control parity; **web works on Chromium-family browsers; Safari/iOS-web is gated on a WebKit Encoded-Transform compatibility spike (Open Q #13) — supported iff it passes, else served by the native iOS client**; one non-Windows host reaches Phase-1 capability behind a flag; no client weakens the crypto/pairing invariants.
 
 ### Phase 4 — Polish, scale, optional SaaS
-AV1 where available, adaptive-bitrate maturity, GPU-decode clients, 4K/120. Signaling+relay autoscaling, SLOs, runbooks, automated cert rotation. Optional SaaS: organizations, RBAC, device inventory, exportable audit logs, signed offline self-host licenses, **OPAQUE account login**, billing. **Consent-based assist-others** (separate, time-boxed, explicitly-granted, auto-expiring, architecturally distinct). Hardening: third-party pen-test, bug bounty, **SLSA L3 attestation**, SOC 2 Type 2 program (when procurement asks). Cross-device audit anchoring; FIDO2 attestation (`srd/v2`).
+AV1 where available, adaptive-bitrate maturity, GPU-decode clients, 4K/120. Signaling+relay autoscaling, SLOs, runbooks, automated cert rotation. Optional SaaS: organizations, RBAC, device inventory, exportable audit logs, signed offline self-host licenses, **OPAQUE account login**, billing. **Consent-based assist-others** (separate, time-boxed, explicitly-granted, auto-expiring, architecturally distinct). Hardening: third-party pen-test, bug bounty, **SLSA L3 attestation**, SOC 2 Type 2 program (when procurement asks). Cross-device audit anchoring; FIDO2 attestation (`wisp/v2`).
 **Exit:** documented SLOs met under load; relay/signaling scale horizontally; signed auto-updates; external pen test passed with no open criticals; self-host path documented and working; assist-others shipped behind explicit opt-in.
 
 ---

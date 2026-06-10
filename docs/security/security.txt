@@ -1,4 +1,4 @@
-# Secure Remote Desktop — security.txt (RFC 9116)
+# Wisp — security.txt (RFC 9116)
 # PLACEHOLDER: replace <domain> and the Expires date before publishing.
 # When live, serve this at https://<domain>/.well-known/security.txt (signed).
 

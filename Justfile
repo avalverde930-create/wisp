@@ -28,4 +28,4 @@ dev-client:
 # gen:            # Phase 2: buf generate (Rust/prost). Phase 3: + ts-proto.
 #     buf generate
 # dev-web:        # Phase 3
-#     pnpm --filter @srd/web dev
+#     pnpm --filter @wisp/web dev

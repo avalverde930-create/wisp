@@ -1,4 +1,4 @@
-//! srd-core — the shared Secure Remote Desktop core (MVP: one crate, many modules).
+//! wisp-core — the shared Wisp core (MVP: one crate, many modules).
 //! Splits into core/* crates in Phase 2-3. Imports nothing host/app/service-ward.
 
 pub mod audit; // append-only hash-chained local log. Crypto-grade ownership.

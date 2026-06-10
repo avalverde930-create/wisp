@@ -1,5 +1,5 @@
 //! Hand-written wire protocol for the MVP. The single source of truth shared by
-//! host and client via this crate. Replaced by generated `proto/srd/v1` types in
+//! host and client via this crate. Replaced by generated `proto/wisp/v1` types in
 //! Phase 2 (buf+prost), then ts-proto in Phase 3. Three channels, ALL inside the
 //! Noise envelope (including bulk — no file-transfer exemption).
 //
@@ -13,8 +13,8 @@
 
 use thiserror::Error;
 
-/// "SRD1" — magic prefix on every media frame header.
-pub const PROTOCOL_MAGIC: u32 = 0x5352_4431;
+/// "WSP1" — magic prefix on every media frame header.
+pub const PROTOCOL_MAGIC: u32 = 0x5753_5031;
 /// Bump on any wire-incompatible change (the spike is v1).
 pub const PROTOCOL_VERSION: u8 = 1;
 /// Hard cap on a peer-declared frame payload. `decode` (and thus `read_frame`) rejects

@@ -44,8 +44,8 @@ unoptimized): ~2 fps debug vs ~19 fps release at 1080p in local testing.
 target\release\host-windows.exe
 
 # LAN: set a shared secret FIRST, then bind to all interfaces. The host REFUSES a
-# non-loopback bind without SRD_SPIKE_TOKEN, so LAN control is never unauthenticated.
-$env:SRD_SPIKE_TOKEN = 'choose-a-strong-secret'
+# non-loopback bind without WISP_TOKEN, so LAN control is never unauthenticated.
+$env:WISP_TOKEN = 'choose-a-strong-secret'
 target\release\host-windows.exe 0.0.0.0:9000
 ```
 
@@ -58,14 +58,14 @@ session-0 helper's job).
 
 ```powershell
 # elevated PowerShell on the host
-netsh advfirewall firewall add rule name="SRD spike UDP 9000" dir=in action=allow protocol=UDP localport=9000 profile=private
+netsh advfirewall firewall add rule name="Wisp UDP 9000" dir=in action=allow protocol=UDP localport=9000 profile=private
 ```
 
 ## Run — the client (the PC you control *from*)
 
 ```powershell
 # LAN: set the SAME token the host used, then connect.
-$env:SRD_SPIKE_TOKEN = 'choose-a-strong-secret'
+$env:WISP_TOKEN = 'choose-a-strong-secret'
 target\release\client.exe <HOST-LAN-IP>:9000      # example: ...client.exe 192.168.1.50:9000
 
 # Same-machine test (no token): just

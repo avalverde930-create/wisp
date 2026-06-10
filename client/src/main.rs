@@ -13,10 +13,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use srd_core::codec;
-use srd_core::transport;
-use srd_core::wire::{InputEvent, MouseButton as WireButton};
 use tokio::sync::mpsc;
+use wisp_core::codec;
+use wisp_core::transport;
+use wisp_core::wire::{InputEvent, MouseButton as WireButton};
 
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
@@ -95,17 +95,14 @@ impl App {
 
         if let Some(w) = &self.window {
             let s = *self.shared.stats.lock().unwrap();
-            w.set_title(&format!(
-                "SRD spike — {:.0} fps · RTT {:.1} ms",
-                s.fps, s.rtt_ms
-            ));
+            w.set_title(&format!("Wisp — {:.0} fps · RTT {:.1} ms", s.fps, s.rtt_ms));
         }
     }
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let attrs = Window::default_attributes().with_title("SRD spike — connecting…");
+        let attrs = Window::default_attributes().with_title("Wisp — connecting…");
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
         let context = softbuffer::Context::new(window.clone()).expect("softbuffer context");
         let surface =
@@ -288,7 +285,7 @@ fn main() -> Result<()> {
         .parse()
         .context("parse host addr (e.g. 192.168.1.50:9000)")?;
 
-    let token = std::env::var("SRD_SPIKE_TOKEN").unwrap_or_default();
+    let token = std::env::var("WISP_TOKEN").unwrap_or_default();
 
     if bench {
         return run_bench(addr, token);

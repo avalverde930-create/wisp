@@ -1,4 +1,4 @@
-# Secure Remote Desktop
+# Wisp
 
 > Security-first remote desktop. View and control your own PC from any device, on hostile networks, with keys only you hold — self-host it or let us, your choice.
 

@@ -30,7 +30,7 @@ In Phase 1 write WgcSource, NvencEncoder, the quinn socket, and Win32SendInput a
 2. Control (reliable, ordered): INPUT_EVENT, DISPLAY_CONFIG, BANDWIDTH_REPORT, QUALITY_MODE, KEYFRAME_REQUEST.
 3. Bulk (reliable, consent-gated): CLIPBOARD, FILE_OFFER/CHUNK/ACK. Clipboard/files treated as untrusted input.
 **Crypto-envelope invariant: ALL THREE channels ride inside the Noise/SFrame envelope, including bulk. Bulk is E2E AND capability-gated. No optimizer may exempt large file transfers.**
-**MVP: hand-written structs in `core/wire`** (no proto/buf). **Phase 2: versioned `proto/srd/v1/` + buf (prost).** **Phase 3: add ts-proto** when the web/TS client first consumes the protocol. 'Never hand-write types twice' earns teeth at the second consumer.
+**MVP: hand-written structs in `core/wire`** (no proto/buf). **Phase 2: versioned `proto/wisp/v1/` + buf (prost).** **Phase 3: add ts-proto** when the web/TS client first consumes the protocol. 'Never hand-write types twice' earns teeth at the second consumer.
 
 ## 4. Connectivity & NAT model — control plane vs data plane
 - **Phase 1: NO control plane.** LAN-only: mDNS or manual IP; direct QUIC; on-screen SAS. This is the zero-server cold-start story.

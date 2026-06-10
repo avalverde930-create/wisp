@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-srd-core = { path = "../core" }
+wisp-core = { path = "../core" }
 winit.workspace = true
 softbuffer.workspace = true   # Phase-0a CPU present; swapped for wgpu in 0b
 tokio.workspace = true

@@ -1,6 +1,6 @@
 # Coordinated Disclosure Policy & SLA
 
-> How to report a vulnerability in Secure Remote Desktop, and what to expect in return.
+> How to report a vulnerability in Wisp, and what to expect in return.
 > Machine-readable contact lives in `security.txt`; the PGP key in `pgp-key.asc`.
 
 ## Reporting

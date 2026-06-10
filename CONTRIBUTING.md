@@ -14,12 +14,12 @@ Most of the north-star tree is intentionally absent (see the deferred-slot ledge
 
 ## Changing the wire protocol
 - **MVP:** edit `core/src/wire.rs` (hand-written). Host and client share it via the same crate.
-- **Phase 2+:** edit `proto/srd/v1/*.proto`, run `just gen`. CI fails if generated code is stale or buf detects an unversioned breaking change. Breaking-change gate is RELAXED during Phase 0-1 spike velocity (there is no proto then) and STRICT from Phase 2.
+- **Phase 2+:** edit `proto/wisp/v1/*.proto`, run `just gen`. CI fails if generated code is stale or buf detects an unversioned breaking change. Breaking-change gate is RELAXED during Phase 0-1 spike velocity (there is no proto then) and STRICT from Phase 2.
 
 ## Conventions
 - Branches: feat/, fix/, sec/, chore/.
 - Commits: Conventional Commits.
-- Rust: kebab-case dir = snake_case crate, product-prefixed where published (srd-core, srd-crypto). TS (Phase 3): scoped @srd/<name>.
+- Rust: kebab-case dir = snake_case crate, product-prefixed where published (wisp-core, wisp-crypto). TS (Phase 3): scoped @wisp/<name>.
 - ADRs: NNNN-kebab-title.md, append-only, never renumbered.
 - Source files follow language idiom, NOT the library's date-prefix naming scheme (codebases are exempt).
 
