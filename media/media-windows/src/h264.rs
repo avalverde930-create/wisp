@@ -15,12 +15,14 @@ use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
 
 use anyhow::{Context, Result};
-use windows::core::{Interface, PWSTR};
+use windows::core::{Interface, PWSTR, VARIANT};
 use windows::Win32::Media::MediaFoundation::{
-    eAVEncH264VProfile_Main, IMFActivate, IMFMediaEvent, IMFMediaEventGenerator, IMFSample,
-    IMFTransform, METransformDrainComplete, METransformHaveOutput, METransformNeedInput,
-    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFShutdown,
-    MFStartup, MFTEnumEx, MFT_FRIENDLY_NAME_Attribute, MFVideoFormat_H264, MFVideoFormat_NV12,
+    eAVEncCommonRateControlMode_Quality, eAVEncH264VProfile_Main, CODECAPI_AVEncCommonQuality,
+    CODECAPI_AVEncCommonRateControlMode, ICodecAPI, IMFActivate, IMFMediaEvent,
+    IMFMediaEventGenerator, IMFSample, IMFTransform, METransformDrainComplete,
+    METransformHaveOutput, METransformNeedInput, MFCreateMediaType, MFCreateMemoryBuffer,
+    MFCreateSample, MFMediaType_Video, MFShutdown, MFStartup, MFTEnumEx,
+    MFT_FRIENDLY_NAME_Attribute, MFVideoFormat_H264, MFVideoFormat_NV12,
     MFVideoInterlace_Progressive, MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MFSTARTUP_FULL,
     MFT_CATEGORY_VIDEO_DECODER, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_ASYNCMFT,
     MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_FLAG_SYNCMFT,
@@ -152,6 +154,18 @@ unsafe fn software_encoder_transform() -> Result<IMFTransform> {
     let act = first.context("null IMFActivate")?;
     act.ActivateObject::<IMFTransform>()
         .context("ActivateObject IMFTransform")
+}
+
+/// Best-effort: switch the encoder to quality-based VBR (via `ICodecAPI`) so static content
+/// compresses small — the default CBR fills the bitrate budget every frame. Ignored if the MFT
+/// does not expose `ICodecAPI` or reject the values.
+unsafe fn tune_rate_control(transform: &IMFTransform) {
+    if let Ok(codec_api) = transform.cast::<ICodecAPI>() {
+        let mode = VARIANT::from(eAVEncCommonRateControlMode_Quality.0 as u32);
+        let _ = codec_api.SetValue(&CODECAPI_AVEncCommonRateControlMode, &mode);
+        let quality = VARIANT::from(70u32);
+        let _ = codec_api.SetValue(&CODECAPI_AVEncCommonQuality, &quality);
+    }
 }
 
 /// Configure an H.264 encoder MFT's output (H.264) then input (NV12) media types. The output
@@ -706,6 +720,7 @@ impl AsyncH264Encoder {
                 .context("MF_TRANSFORM_ASYNC_UNLOCK")?;
             let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
 
+            tune_rate_control(&transform);
             configure_h264_encoder_types(&transform, width, height, fps, bitrate)?;
             let events: IMFMediaEventGenerator =
                 transform.cast().context("cast IMFMediaEventGenerator")?;

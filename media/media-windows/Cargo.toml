@@ -16,4 +16,5 @@ windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Media_MediaFoundation",
     "Win32_System_Com",
+    "Win32_System_Variant", # VARIANT for ICodecAPI rate-control tuning (4c.1c.1b)
 ] }
