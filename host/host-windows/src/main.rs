@@ -55,6 +55,23 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // H.264 encode self-test (ADR-0011 4c.1b): `host-windows.exe --selftest-h264`. Encodes a
+    // synthetic frame through the software MFT and reports the H.264 output.
+    if std::env::args().any(|a| a == "--selftest-h264") {
+        match h264::selftest(1920, 1080) {
+            Ok(nal) => {
+                let start_code = nal.windows(4).any(|w| w == [0, 0, 0, 1]);
+                println!(
+                    "[host] H.264 self-test: encoded {} bytes; Annex-B start code present: {}",
+                    nal.len(),
+                    start_code
+                );
+            }
+            Err(e) => println!("[host] H.264 self-test failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     let bind: SocketAddr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:9000".to_string())
