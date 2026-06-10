@@ -12,7 +12,7 @@ use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use wisp_core::wire::FrameCodec;
 use wisp_core::{codec, color};
-use wisp_media_win::h264::H264Encoder;
+use wisp_media_win::h264::{AsyncH264Encoder, H264Encoder};
 
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
@@ -87,11 +87,13 @@ fn capture_into(width: i32, height: i32, buf: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// The active frame encoder: the default LZ4 interframe codec, or the Media Foundation H.264
-/// encoder (`WISP_CODEC=h264`). Both consume BGRA and yield a wire `FrameCodec` + payload.
+/// The active frame encoder: the default LZ4 interframe codec, the hardware QSV H.264 encoder,
+/// or the software H.264 encoder (`WISP_CODEC=h264`). All consume BGRA and yield a wire
+/// `FrameCodec` + payload (H.264 may yield an empty payload while the encoder pipelines).
 enum FrameEncoderKind {
     Interframe(codec::FrameEncoder),
     H264(H264Encoder),
+    Qsv(AsyncH264Encoder),
 }
 
 impl FrameEncoderKind {
@@ -102,17 +104,29 @@ impl FrameEncoderKind {
                 let nv12 = color::bgra_to_nv12(bgra, w, h);
                 Ok((FrameCodec::HwH264, e.encode(&nv12)?))
             }
+            FrameEncoderKind::Qsv(e) => {
+                let nv12 = color::bgra_to_nv12(bgra, w, h);
+                Ok((FrameCodec::HwH264, e.encode(&nv12)?))
+            }
         }
     }
 }
 
-/// Build the encoder for `w`x`h` from `WISP_CODEC` (falls back to the LZ4 interframe codec if
-/// H.264 is requested but unavailable).
+/// Build the encoder for `w`x`h` from `WISP_CODEC`: `h264` = software H.264 MFT, `qsv` = hardware
+/// QSV async encoder (best at 4K / once GPU colour conversion lands), anything else = the default
+/// LZ4 interframe codec. H.264 variants fall back to LZ4 if the encoder cannot be created.
 fn make_encoder(w: u32, h: u32) -> FrameEncoderKind {
-    let want_h264 = std::env::var("WISP_CODEC")
-        .map(|v| v.eq_ignore_ascii_case("h264"))
-        .unwrap_or(false);
-    if want_h264 {
+    let codec = std::env::var("WISP_CODEC").unwrap_or_default();
+    if codec.eq_ignore_ascii_case("qsv") {
+        match AsyncH264Encoder::new_hardware(w, h, 30, 8_000_000) {
+            Ok(e) => {
+                println!("[host] codec: H.264 (hardware QSV, low-latency)");
+                return FrameEncoderKind::Qsv(e);
+            }
+            Err(e) => eprintln!("[host] QSV unavailable ({e:#}); trying software H.264"),
+        }
+    }
+    if codec.eq_ignore_ascii_case("qsv") || codec.eq_ignore_ascii_case("h264") {
         match H264Encoder::new_software(w, h, 30, 8_000_000) {
             Ok(e) => {
                 println!("[host] codec: H.264 (software MFT, low-latency)");
