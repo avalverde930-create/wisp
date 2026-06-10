@@ -9,6 +9,7 @@
 //! - `crypto`    — Noise XX/IK handshake + session AEAD + SAS (ADR-0003).
 //! - `channel`   — establish a Noise-secured session over a quinn bi-stream.
 //! - `identity`  — persistent device keypair + at-rest protection (ADR-0009 Option A).
+//! - `known_hosts` — client-side cache of host statics, keyed by address (IK reconnect).
 //! - `trust`     — pinned peer public keys; reject an unknown static (ADR-0003).
 //! - `audit` / `session` / `media` — Phase-1+ stubs (documented homes).
 
@@ -18,6 +19,7 @@ pub mod codec; // frame (de)compression for the media path (Phase-0a: LZ4; 0b: H
 pub mod crypto; // Noise XX->IK; ONLY crypto home; fuzzed. Crypto-grade ownership.
 pub mod framing; // quinn-stream protocol I/O: frame / input / hello read+write
 pub mod identity; // device keys, secure element, revocation, recovery-code slot
+pub mod known_hosts; // client-side cache of host statics (addr -> static) for IK reconnect
 pub mod media; // codec negotiation + capture/encode/input pipeline orchestration
 pub mod session; // pairing + consent + deny-by-default capabilities
 pub mod transport; // quinn endpoints + spike TLS; the native data plane

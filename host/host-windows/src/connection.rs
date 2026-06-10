@@ -36,14 +36,18 @@ pub async fn handle_connection(
             Ok(Err(e)) => anyhow::bail!("accept stream from {peer}: {e}"),
             Err(_) => anyhow::bail!("client {peer} opened no stream within 5s"),
         };
-    let est = channel::handshake_xx_responder(&mut send, &mut recv, &device_private)
+    let (pattern, est) = channel::accept(&mut send, &mut recv, &device_private)
         .await
         .with_context(|| format!("noise handshake with {peer}"))?;
     let fp = trust::fingerprint(&est.remote_static);
-    println!(
-        "[host] pairing SAS for {peer}: {} (compare with the client)",
-        est.sas
-    );
+    if pattern == channel::HS_IK {
+        println!("[host] IK 0-RTT reconnect from {peer} (device {fp})");
+    } else {
+        println!(
+            "[host] XX first-contact from {peer}; pairing SAS: {} (compare with the client)",
+            est.sas
+        );
+    }
 
     // Key pinning (ADR-0003): loopback is the local trust boundary; otherwise the client
     // static must be pinned, or the host must be in pair mode (then we pin it).
