@@ -13,7 +13,8 @@ This repo deliberately starts THIN. On commit 1 only the Phase 0–1 surface exi
 
 ## Repo map (current)
 ```
-core/      ONE Rust crate; modules: wire, crypto, transport, session, media, identity, audit
+core/      ONE Rust crate; modules: wire, codec, transport, framing, crypto, channel,
+           identity, known_hosts, trust, session, media, audit
 host/      host-core (lib) + host-windows (bin) [+ host-windows-helper in Phase 2]
 client/    the single desktop dogfood client (winit + wgpu)
 spikes/    throwaway Phase-0 de-risking experiments
