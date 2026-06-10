@@ -59,12 +59,11 @@ async fn main() -> Result<()> {
     // synthetic frame through the software MFT and reports the H.264 output.
     if std::env::args().any(|a| a == "--selftest-h264") {
         match h264::selftest(1920, 1080) {
-            Ok(nal) => {
-                let start_code = nal.windows(4).any(|w| w == [0, 0, 0, 1]);
+            Ok(t) => {
                 println!(
-                    "[host] H.264 self-test: encoded {} bytes; Annex-B start code present: {}",
-                    nal.len(),
-                    start_code
+                    "[host] H.264 round-trip: encoded {} bytes (start code {}); decoded {} frame(s); \
+                     mean abs error {:.2}/255 (lossy)",
+                    t.encoded_bytes, t.start_code, t.decoded_frames, t.mean_abs_error
                 );
             }
             Err(e) => println!("[host] H.264 self-test failed: {e:#}"),
