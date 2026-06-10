@@ -86,9 +86,58 @@ fn capture_into(width: i32, height: i32, buf: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// Capture loop (~30 fps): grab -> interframe-encode -> push to `tx`. Exits when the receiver
-/// (the net task) drops, which is how a disconnect tears the capture thread down.
+/// Encode one BGRA frame and send it; returns false when the receiver (net task) has dropped
+/// (the disconnect signal that tears the capture thread down). `blocking_send` back-pressures.
+fn encode_and_send(
+    tx: &mpsc::Sender<CapturedFrame>,
+    encoder: &mut codec::FrameEncoder,
+    seq: &mut u64,
+    start: Instant,
+    w: u32,
+    h: u32,
+    bgra: &[u8],
+) -> bool {
+    let (codec, payload) = encoder.encode(bgra, w, h);
+    let frame = CapturedFrame {
+        seq: *seq,
+        width: w,
+        height: h,
+        stride: w * 4,
+        codec,
+        capture_micros: start.elapsed().as_micros() as u64,
+        payload,
+    };
+    *seq = seq.wrapping_add(1);
+    tx.blocking_send(frame).is_ok()
+}
+
+/// Capture loop: pick the capture source, then grab -> interframe-encode -> push to `tx`.
+/// `WISP_CAPTURE=wgc` selects Windows.Graphics.Capture (ADR-0011 4b); otherwise (and on any
+/// WGC init failure) the default GDI grab is used. Exits when the net task drops the receiver.
 pub fn capture_loop(tx: mpsc::Sender<CapturedFrame>) {
+    let want_wgc = std::env::var("WISP_CAPTURE")
+        .map(|v| v.eq_ignore_ascii_case("wgc"))
+        .unwrap_or(false);
+    if want_wgc {
+        match crate::capture_wgc::WgcCapturer::new() {
+            Ok(cap) => {
+                println!(
+                    "[host] capture: Windows.Graphics.Capture ({}x{}, native pixels)",
+                    cap.width(),
+                    cap.height()
+                );
+                wgc_capture_loop(cap, tx);
+                return;
+            }
+            Err(e) => eprintln!("[host] WGC requested but unavailable ({e:#}); using GDI"),
+        }
+    }
+    println!("[host] capture: GDI");
+    gdi_capture_loop(tx);
+}
+
+/// GDI capture loop (~30 fps): BitBlt + GetDIBits the primary monitor (DPI-scaled logical res).
+fn gdi_capture_loop(tx: mpsc::Sender<CapturedFrame>) {
     let (w, h) = primary_size();
     let start = Instant::now();
     let mut seq = 0u64;
@@ -98,23 +147,36 @@ pub fn capture_loop(tx: mpsc::Sender<CapturedFrame>) {
     loop {
         let t0 = Instant::now();
         if capture_into(w, h, &mut raw).is_ok() {
-            let (codec_tag, payload) = encoder.encode(&raw, w as u32, h as u32);
-            let frame = CapturedFrame {
-                seq,
-                width: w as u32,
-                height: h as u32,
-                stride: (w * 4) as u32,
-                codec: codec_tag,
-                capture_micros: start.elapsed().as_micros() as u64,
-                payload,
-            };
-            seq = seq.wrapping_add(1);
-            // blocking_send applies back-pressure; errors when the receiver (net task) drops.
-            if tx.blocking_send(frame).is_err() {
+            if !encode_and_send(&tx, &mut encoder, &mut seq, start, w as u32, h as u32, &raw) {
                 break;
             }
         } else {
             std::thread::sleep(Duration::from_millis(100));
+        }
+        let dt = t0.elapsed();
+        if dt < target {
+            std::thread::sleep(target - dt);
+        }
+    }
+}
+
+/// WGC capture loop: poll the frame pool; WGC delivers a frame when the desktop changes, so a
+/// static screen yields none (efficient). Captures at the monitor's native resolution.
+fn wgc_capture_loop(mut cap: crate::capture_wgc::WgcCapturer, tx: mpsc::Sender<CapturedFrame>) {
+    let start = Instant::now();
+    let mut seq = 0u64;
+    let mut encoder = codec::FrameEncoder::new(codec::DEFAULT_GOP);
+    let target = Duration::from_millis(16); // poll ~60 fps; None when nothing changed
+    loop {
+        let t0 = Instant::now();
+        match cap.try_next() {
+            Ok(Some((w, h, bgra))) => {
+                if !encode_and_send(&tx, &mut encoder, &mut seq, start, w, h, &bgra) {
+                    break;
+                }
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("[host] WGC frame error: {e}"),
         }
         let dt = t0.elapsed();
         if dt < target {
