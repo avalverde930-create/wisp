@@ -98,6 +98,12 @@ pub fn default_key_path() -> Option<PathBuf> {
     None
 }
 
+/// Per-role device-key path (so a host and a client on the same machine get distinct
+/// identities): `<default dir>/<role>-device.key`.
+pub fn role_key_path(role: &str) -> Option<PathBuf> {
+    default_key_path().map(|p| p.with_file_name(format!("{role}-device.key")))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

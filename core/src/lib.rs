@@ -9,6 +9,7 @@
 //! - `crypto`    — Noise XX/IK handshake + session AEAD + SAS (ADR-0003).
 //! - `channel`   — establish a Noise-secured session over a quinn bi-stream.
 //! - `identity`  — persistent device keypair + at-rest protection (ADR-0009 Option A).
+//! - `trust`     — pinned peer public keys; reject an unknown static (ADR-0003).
 //! - `audit` / `session` / `media` — Phase-1+ stubs (documented homes).
 
 pub mod audit; // append-only hash-chained local log. Crypto-grade ownership.
@@ -20,4 +21,5 @@ pub mod identity; // device keys, secure element, revocation, recovery-code slot
 pub mod media; // codec negotiation + capture/encode/input pipeline orchestration
 pub mod session; // pairing + consent + deny-by-default capabilities
 pub mod transport; // quinn endpoints + spike TLS; the native data plane
+pub mod trust; // pinned peer public keys (ADR-0003 key pinning)
 pub mod wire; // hand-written wire structs (replaced by generated proto/ in Phase 2)

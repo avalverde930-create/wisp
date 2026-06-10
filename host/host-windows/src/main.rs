@@ -1,27 +1,28 @@
 //! host-windows — Phase-1 host: GDI primary-monitor capture -> LZ4 -> Noise-encrypted
-//! quinn media stream; client input stream -> Win32 `SendInput`. Interactive-session
-//! only (ADR-0010).
+//! quinn media stream; client input -> Win32 `SendInput`. Interactive-session only (ADR-0010).
 //!
 //! Module map (one responsibility each):
 //! - `capture`    — GDI screen grab + LZ4 encode on a dedicated thread.
 //! - `inject`     — Win32 `SendInput` injection of inbound input.
-//! - `connection` — one Noise-secured client session (handshake + encrypted streams).
+//! - `connection` — one Noise-secured, pinned client session.
 //!
-//! This file is just the entry point: arg parsing, the device keypair, the token
-//! guardrail, and the accept loop.
+//! This file is the entry point: arg parsing, the persistent device key, the pinned
+//! trust store, the token guardrail, and the accept loop.
 //!
-//! Traffic is now E2E-encrypted with Noise XX (`wisp_core::channel`) + an out-of-band
-//! SAS (ADR-0003). The shared token remains the spike LAN access gate (sent encrypted).
+//! Security: Noise XX E2E (`wisp_core::channel`) + out-of-band SAS (ADR-0003) + key
+//! PINNING (ADR-0003): a non-loopback client whose device key is not pinned is rejected
+//! unless the host runs in pair mode (WISP_PAIR=1).
 
 mod capture;
 mod connection;
 mod inject;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
-use wisp_core::{crypto, transport};
+use wisp_core::trust::{self, TrustStore};
+use wisp_core::{crypto, identity, transport};
 
 use crate::capture::primary_size;
 use crate::connection::handle_connection;
@@ -34,8 +35,7 @@ async fn main() -> Result<()> {
         .parse()
         .context("parse bind addr (default 127.0.0.1:9000; LAN e.g. 0.0.0.0:9000)")?;
 
-    // P1 guardrail: a non-loopback bind requires a shared token on BOTH ends, so a
-    // LAN bind can never silently accept unauthenticated control.
+    // P1 guardrail: a non-loopback bind requires a shared token on BOTH ends.
     let token = std::env::var("WISP_TOKEN").ok();
     if !bind.ip().is_loopback() && token.is_none() {
         anyhow::bail!(
@@ -46,29 +46,59 @@ async fn main() -> Result<()> {
         );
     }
 
-    // Per-process device static key (ephemeral for the spike; persistence + OS-keystore
-    // wrapping per ADR-0009 Option A is a later increment).
-    let device_private = Arc::new(crypto::generate_static_keypair()?.private);
+    // Persistent device static key (stable identity across runs; OS-keystore wrapping per
+    // ADR-0009 Option A is a later increment).
+    let device = match identity::role_key_path("host") {
+        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        None => {
+            eprintln!("[host] no config dir found; using an ephemeral device key");
+            crypto::generate_static_keypair()?
+        }
+    };
+    let device_private = Arc::new(device.private);
+
+    // Pinned trust store of known client device keys (ADR-0003 key pinning).
+    let trust_path = identity::role_key_path("host")
+        .map(|p| p.with_file_name("trusted-clients.txt"))
+        .unwrap_or_else(|| std::env::temp_dir().join("wisp-trusted-clients.txt"));
+    let trust = Arc::new(Mutex::new(TrustStore::load(&trust_path)?));
+    let pair_mode = std::env::var("WISP_PAIR").is_ok();
 
     let (w, h) = primary_size();
     let endpoint = transport::server_endpoint(bind)?;
     println!("[host] Wisp host");
+    println!(
+        "[host] device fingerprint: {}",
+        trust::fingerprint(&device.public)
+    );
     println!("[host] primary monitor: {w}x{h}");
     println!("[host] listening on {bind} (ALPN wisp/0) - waiting for a client...");
-    println!("[host] transport: Noise XX E2E (a pairing SAS is printed per connection)");
+    println!("[host] transport: Noise XX E2E + key pinning (SAS printed per connection)");
+    println!(
+        "[host] pairing: {}",
+        if pair_mode {
+            "ON (new LAN devices will be pinned)".to_string()
+        } else {
+            format!(
+                "off ({} pinned; set WISP_PAIR=1 to pair a new LAN device)",
+                trust.lock().unwrap().len()
+            )
+        }
+    );
     match &token {
         Some(_) => println!("[host] access: shared token REQUIRED (WISP_TOKEN)"),
-        None => println!("[host] access: NONE (loopback only; set WISP_TOKEN to allow LAN)"),
+        None => println!("[host] access: token NONE (loopback only)"),
     }
     println!("[host] NOTE: interactive session only; UAC / lock screen out of scope (ADR-0010).");
 
     while let Some(incoming) = endpoint.accept().await {
         let token = token.clone();
         let dp = device_private.clone();
+        let tr = trust.clone();
         match incoming.await {
             Ok(conn) => {
                 tokio::spawn(async move {
-                    if let Err(e) = handle_connection(conn, token, dp).await {
+                    if let Err(e) = handle_connection(conn, token, dp, tr, pair_mode).await {
                         eprintln!("[host] connection error: {e}");
                     }
                 });

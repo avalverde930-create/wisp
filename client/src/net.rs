@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
 use wisp_core::wire::{FrameHeader, InputEvent};
-use wisp_core::{channel, codec, crypto, transport};
+use wisp_core::{channel, codec, crypto, identity, transport};
 
 use crate::state::{LatestFrame, Shared};
 
@@ -29,7 +29,10 @@ pub async fn net_main(
     mut input_rx: mpsc::UnboundedReceiver<InputEvent>,
     token: String,
 ) -> Result<()> {
-    let device = crypto::generate_static_keypair()?;
+    let device = match identity::role_key_path("client") {
+        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        None => crypto::generate_static_keypair()?,
+    };
     let endpoint = transport::client_endpoint()?;
     let conn = transport::connect(&endpoint, addr).await?;
     println!("[client] connected to {addr}");
@@ -87,7 +90,10 @@ pub async fn net_main(
 pub fn run_bench(addr: SocketAddr, token: String) -> Result<()> {
     let rt = tokio::runtime::Runtime::new().context("tokio runtime")?;
     rt.block_on(async move {
-        let device = crypto::generate_static_keypair()?;
+        let device = match identity::role_key_path("client") {
+        Some(p) => identity::load_or_create(p, &identity::Unprotected)?,
+        None => crypto::generate_static_keypair()?,
+    };
         let endpoint = transport::client_endpoint()?;
         let conn = transport::connect(&endpoint, addr).await?;
         println!("[bench] connected to {addr}");
