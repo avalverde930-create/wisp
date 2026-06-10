@@ -6,9 +6,12 @@
 //! - `codec`     — frame (de)compression for the media path (Phase-0a: LZ4; 0b: HW H.264).
 //! - `transport` — quinn endpoint setup + spike TLS (the QUIC pipe).
 //! - `framing`   — protocol I/O over quinn streams (frame / input / hello read+write).
-//! - `crypto` / `audit` / `identity` / `session` / `media` — Phase-1+ stubs (documented homes).
+//! - `crypto`    — Noise XX/IK handshake + session AEAD + SAS (ADR-0003).
+//! - `channel`   — establish a Noise-secured session over a quinn bi-stream.
+//! - `audit` / `identity` / `session` / `media` — Phase-1+ stubs (documented homes).
 
 pub mod audit; // append-only hash-chained local log. Crypto-grade ownership.
+pub mod channel; // establish a Noise-secured session over a quinn bi-stream
 pub mod codec; // frame (de)compression for the media path (Phase-0a: LZ4; 0b: HW H.264)
 pub mod crypto; // Noise XX->IK; ONLY crypto home; fuzzed. Crypto-grade ownership.
 pub mod framing; // quinn-stream protocol I/O: frame / input / hello read+write

@@ -3,6 +3,7 @@
 //! - media frames  (host -> client): length is in the fixed `FrameHeader`.
 //! - input events  (client -> host): u16 length prefix + encoded `InputEvent`.
 //! - spike hello   (client -> host): u16 length prefix + the pre-shared token.
+//! - generic msgs  (either direction): u32 length prefix + opaque bytes (Noise handshake).
 //!
 //! The decode path is a designated cargo-fuzz target. `wire::FrameHeader::decode` caps
 //! the payload length before `read_frame` allocates.
@@ -10,7 +11,7 @@
 use anyhow::{Context, Result};
 use quinn::{RecvStream, SendStream};
 
-use crate::wire::{FrameHeader, InputEvent, WireError};
+use crate::wire::{FrameHeader, InputEvent, WireError, MAX_FRAME_PAYLOAD};
 
 // ---------------------------------------------------------------------------
 // Media-frame stream helpers (host -> client, ordered uni stream)
@@ -94,6 +95,32 @@ pub async fn read_hello(recv: &mut RecvStream) -> Result<String> {
         .await
         .context("read hello body")?;
     String::from_utf8(body).context("hello token utf8")
+}
+
+// ---------------------------------------------------------------------------
+// Generic length-prefixed (u32) byte messages — used for Noise handshake messages
+// (core::channel) and, later, Noise-wrapped frames. Capped like a media frame.
+// ---------------------------------------------------------------------------
+
+pub async fn write_msg(send: &mut SendStream, msg: &[u8]) -> Result<()> {
+    send.write_all(&(msg.len() as u32).to_be_bytes())
+        .await
+        .context("write msg len")?;
+    send.write_all(msg).await.context("write msg body")?;
+    Ok(())
+}
+
+pub async fn read_msg(recv: &mut RecvStream) -> Result<Vec<u8>> {
+    let mut lb = [0u8; 4];
+    recv.read_exact(&mut lb).await.context("read msg len")?;
+    let len = u32::from_be_bytes(lb);
+    anyhow::ensure!(
+        len <= MAX_FRAME_PAYLOAD,
+        "msg length {len} exceeds cap {MAX_FRAME_PAYLOAD}"
+    );
+    let mut body = vec![0u8; len as usize];
+    recv.read_exact(&mut body).await.context("read msg body")?;
+    Ok(body)
 }
 
 fn wire_err(e: WireError) -> anyhow::Error {
