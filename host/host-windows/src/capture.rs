@@ -1,17 +1,18 @@
 //! host-windows::capture — GDI primary-monitor screen capture.
 //!
-//! Grabs the primary monitor as top-down BGRA8 on a dedicated OS thread, encodes each frame
-//! through a stateful `wisp_core::codec::FrameEncoder` (GOP keyframe + XOR-delta interframe,
-//! ADR-0011 4a), and hands them to the net task over a bounded channel (back-pressure paces
-//! capture). Phase-0b 4b/4c replace the GDI grab with WGC and the encoder with hardware H.264
-//! behind the same `FrameEncoder` call site.
+//! Grabs the primary monitor as top-down BGRA8 on a dedicated OS thread, encodes each frame,
+//! and hands them to the net task over a bounded channel (back-pressure paces capture). The
+//! encoder is selectable (ADR-0011): `WISP_CODEC=h264` uses the Media Foundation H.264 encoder
+//! (`wisp-media-win`, 4c), otherwise the default LZ4 GOP+XOR-delta interframe codec (4a). The
+//! capture source is selectable too: `WISP_CAPTURE=wgc` for Windows.Graphics.Capture (4b).
 
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
-use wisp_core::codec;
 use wisp_core::wire::FrameCodec;
+use wisp_core::{codec, color};
+use wisp_media_win::h264::H264Encoder;
 
 use windows::Win32::Graphics::Gdi::{
     BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject, GetDC, GetDIBits,
@@ -86,18 +87,68 @@ fn capture_into(width: i32, height: i32, buf: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+/// The active frame encoder: the default LZ4 interframe codec, or the Media Foundation H.264
+/// encoder (`WISP_CODEC=h264`). Both consume BGRA and yield a wire `FrameCodec` + payload.
+enum FrameEncoderKind {
+    Interframe(codec::FrameEncoder),
+    H264(H264Encoder),
+}
+
+impl FrameEncoderKind {
+    fn encode(&mut self, bgra: &[u8], w: u32, h: u32) -> Result<(FrameCodec, Vec<u8>)> {
+        match self {
+            FrameEncoderKind::Interframe(e) => Ok(e.encode(bgra, w, h)),
+            FrameEncoderKind::H264(e) => {
+                let nv12 = color::bgra_to_nv12(bgra, w, h);
+                Ok((FrameCodec::HwH264, e.encode(&nv12)?))
+            }
+        }
+    }
+}
+
+/// Build the encoder for `w`x`h` from `WISP_CODEC` (falls back to the LZ4 interframe codec if
+/// H.264 is requested but unavailable).
+fn make_encoder(w: u32, h: u32) -> FrameEncoderKind {
+    let want_h264 = std::env::var("WISP_CODEC")
+        .map(|v| v.eq_ignore_ascii_case("h264"))
+        .unwrap_or(false);
+    if want_h264 {
+        match H264Encoder::new_software(w, h, 30, 8_000_000) {
+            Ok(e) => {
+                println!("[host] codec: H.264 (software MFT, low-latency)");
+                return FrameEncoderKind::H264(e);
+            }
+            Err(e) => {
+                eprintln!("[host] H.264 requested but unavailable ({e:#}); using LZ4 interframe")
+            }
+        }
+    }
+    println!("[host] codec: LZ4 interframe");
+    FrameEncoderKind::Interframe(codec::FrameEncoder::new(codec::DEFAULT_GOP))
+}
+
 /// Encode one BGRA frame and send it; returns false when the receiver (net task) has dropped
-/// (the disconnect signal that tears the capture thread down). `blocking_send` back-pressures.
+/// (the disconnect signal that tears the capture thread down). An empty payload (the H.264
+/// encoder is still buffering) is skipped, not sent. `blocking_send` back-pressures.
 fn encode_and_send(
     tx: &mpsc::Sender<CapturedFrame>,
-    encoder: &mut codec::FrameEncoder,
+    encoder: &mut FrameEncoderKind,
     seq: &mut u64,
     start: Instant,
     w: u32,
     h: u32,
     bgra: &[u8],
 ) -> bool {
-    let (codec, payload) = encoder.encode(bgra, w, h);
+    let (codec, payload) = match encoder.encode(bgra, w, h) {
+        Ok(x) => x,
+        Err(e) => {
+            eprintln!("[host] encode error: {e}");
+            return true; // skip this frame, keep capturing
+        }
+    };
+    if payload.is_empty() {
+        return true; // encoder buffering — nothing to send yet
+    }
     let frame = CapturedFrame {
         seq: *seq,
         width: w,
@@ -142,7 +193,7 @@ fn gdi_capture_loop(tx: mpsc::Sender<CapturedFrame>) {
     let start = Instant::now();
     let mut seq = 0u64;
     let mut raw = Vec::new();
-    let mut encoder = codec::FrameEncoder::new(codec::DEFAULT_GOP);
+    let mut encoder = make_encoder(w as u32, h as u32);
     let target = Duration::from_millis(33); // ~30 fps for the spike
     loop {
         let t0 = Instant::now();
@@ -160,12 +211,38 @@ fn gdi_capture_loop(tx: mpsc::Sender<CapturedFrame>) {
     }
 }
 
+/// 4c.3b self-test: capture `frames` real GDI frames and H.264-encode them (the live capture
+/// path), returning (frames captured, total H.264 bytes, frames that produced output, whether
+/// an Annex-B start code is present). Verifies the real-capture -> H.264 path in isolation.
+pub fn selftest_capture_h264(frames: usize) -> Result<(usize, usize, usize, bool)> {
+    let (w, h) = primary_size();
+    let mut enc = H264Encoder::new_software(w as u32, h as u32, 30, 8_000_000)?;
+    let mut raw = Vec::new();
+    let mut stream = Vec::new();
+    let (mut captured, mut with_output) = (0usize, 0usize);
+    for _ in 0..frames {
+        if capture_into(w, h, &mut raw).is_ok() {
+            captured += 1;
+            let nv12 = color::bgra_to_nv12(&raw, w as u32, h as u32);
+            let nal = enc.encode(&nv12)?;
+            if !nal.is_empty() {
+                with_output += 1;
+            }
+            stream.extend_from_slice(&nal);
+        }
+        std::thread::sleep(Duration::from_millis(33));
+    }
+    stream.extend_from_slice(&enc.drain()?);
+    let start_code = stream.windows(4).any(|x| x == [0, 0, 0, 1]);
+    Ok((captured, stream.len(), with_output, start_code))
+}
+
 /// WGC capture loop: poll the frame pool; WGC delivers a frame when the desktop changes, so a
 /// static screen yields none (efficient). Captures at the monitor's native resolution.
 fn wgc_capture_loop(mut cap: crate::capture_wgc::WgcCapturer, tx: mpsc::Sender<CapturedFrame>) {
     let start = Instant::now();
     let mut seq = 0u64;
-    let mut encoder = codec::FrameEncoder::new(codec::DEFAULT_GOP);
+    let mut encoder = make_encoder(cap.width(), cap.height());
     let target = Duration::from_millis(16); // poll ~60 fps; None when nothing changed
     loop {
         let t0 = Instant::now();

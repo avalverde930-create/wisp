@@ -23,8 +23,9 @@ use windows::Win32::Media::MediaFoundation::{
     MFT_MESSAGE_COMMAND_DRAIN, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
     MFT_REGISTER_TYPE_INFO, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
-    MF_E_TRANSFORM_TYPE_NOT_SET, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
-    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE, MF_VERSION,
+    MF_E_TRANSFORM_TYPE_NOT_SET, MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
+    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG2_PROFILE, MF_MT_SUBTYPE,
+    MF_VERSION,
 };
 use windows::Win32::System::Com::{CoIncrementMTAUsage, CoTaskMemFree};
 
@@ -162,6 +163,12 @@ impl H264Encoder {
             CoIncrementMTAUsage().context("CoIncrementMTAUsage")?;
             MFStartup(MF_VERSION, MFSTARTUP_FULL).context("MFStartup")?;
             let transform = software_encoder_transform()?;
+
+            // Request low-latency mode (no B-frames / lookahead) so each input frame yields its
+            // output promptly — essential for real-time streaming. Best-effort.
+            if let Ok(attrs) = transform.GetAttributes() {
+                let _ = attrs.SetUINT32(&MF_LOW_LATENCY, 1);
+            }
 
             // Output type MUST be set before the input type for an H.264 encoder MFT.
             let out = MFCreateMediaType().context("MFCreateMediaType (output)")?;

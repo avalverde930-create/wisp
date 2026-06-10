@@ -36,6 +36,9 @@ pub fn decode_frame(codec: FrameCodec, payload: &[u8]) -> Result<Vec<u8>> {
         FrameCodec::Lz4Delta => {
             anyhow::bail!("Lz4Delta is an interframe codec; decode via FrameDecoder")
         }
+        FrameCodec::HwH264 => {
+            anyhow::bail!("HwH264 is decoded by the platform media decoder (wisp-media-win)")
+        }
     }
 }
 
@@ -125,6 +128,9 @@ impl FrameDecoder {
                 }
                 self.prev.clone_from(&frame);
                 Ok(frame)
+            }
+            FrameCodec::HwH264 => {
+                anyhow::bail!("HwH264 is decoded by the platform media decoder (wisp-media-win)")
             }
         }
     }

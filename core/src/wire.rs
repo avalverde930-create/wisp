@@ -55,7 +55,9 @@ pub enum FrameCodec {
     /// LZ4-compressed XOR delta vs the previous frame (Phase-0b interframe, ADR-0011 4a).
     /// Self-describing only with decoder state — decode via `codec::FrameDecoder`.
     Lz4Delta = 2,
-    // Phase-0b/1: HwH264 = 3 (WGC -> NVENC/QSV/AMF, x264 floor).
+    /// Hardware/Media-Foundation H.264 access unit (Phase-0b, ADR-0011 4c). The payload is an
+    /// H.264 elementary-stream access unit; decode is platform-side (`wisp-media-win`), not core.
+    HwH264 = 3,
 }
 
 impl FrameCodec {
@@ -64,6 +66,7 @@ impl FrameCodec {
             0 => Ok(FrameCodec::RawBgra),
             1 => Ok(FrameCodec::Lz4Bgra),
             2 => Ok(FrameCodec::Lz4Delta),
+            3 => Ok(FrameCodec::HwH264),
             other => Err(WireError::UnknownCodec(other)),
         }
     }

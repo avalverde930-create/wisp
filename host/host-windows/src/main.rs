@@ -72,6 +72,19 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Real-capture H.264 self-test (ADR-0011 4c.3b): `host-windows.exe --selftest-capture`.
+    // Captures real GDI frames and H.264-encodes them via the live capture path.
+    if std::env::args().any(|a| a == "--selftest-capture") {
+        match capture::selftest_capture_h264(30) {
+            Ok((captured, bytes, with_output, start_code)) => println!(
+                "[host] capture->H.264: {captured} frames captured, {with_output} produced output, \
+                 {bytes} H.264 bytes, start code {start_code}"
+            ),
+            Err(e) => println!("[host] capture->H.264 self-test failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     let bind: SocketAddr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:9000".to_string())
