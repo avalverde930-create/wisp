@@ -8,7 +8,8 @@
 //! - `framing`   — protocol I/O over quinn streams (frame / input / hello read+write).
 //! - `crypto`    — Noise XX/IK handshake + session AEAD + SAS (ADR-0003).
 //! - `channel`   — establish a Noise-secured session over a quinn bi-stream.
-//! - `audit` / `identity` / `session` / `media` — Phase-1+ stubs (documented homes).
+//! - `identity`  — persistent device keypair + at-rest protection (ADR-0009 Option A).
+//! - `audit` / `session` / `media` — Phase-1+ stubs (documented homes).
 
 pub mod audit; // append-only hash-chained local log. Crypto-grade ownership.
 pub mod channel; // establish a Noise-secured session over a quinn bi-stream
