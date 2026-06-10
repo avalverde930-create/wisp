@@ -17,6 +17,7 @@
 mod capture;
 mod capture_wgc;
 mod connection;
+mod h264;
 mod inject;
 
 use std::net::SocketAddr;
@@ -41,6 +42,15 @@ async fn main() -> Result<()> {
                 )
             }
             Err(e) => println!("[host] WGC unavailable: {e:#}"),
+        }
+        return Ok(());
+    }
+
+    // Hardware H.264 encoder probe (ADR-0011 4c.0): `host-windows.exe --probe-h264`. Lists the
+    // H.264 encoder MFTs (hardware NVENC/QSV/AMF + software floor) available on this machine.
+    if std::env::args().any(|a| a == "--probe-h264") {
+        if let Err(e) = h264::probe() {
+            println!("[host] H.264 probe failed: {e:#}");
         }
         return Ok(());
     }
