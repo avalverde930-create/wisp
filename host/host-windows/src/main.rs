@@ -17,6 +17,7 @@
 mod capture;
 mod capture_wgc;
 mod connection;
+mod gpu_color;
 mod inject;
 
 use wisp_media_win::h264;
@@ -62,6 +63,16 @@ async fn main() -> Result<()> {
         match h264::probe_hardware_encoder(1920, 1080, 30, 8_000_000) {
             Ok(desc) => println!("[host] QSV encoder OK: {desc}"),
             Err(e) => println!("[host] QSV encoder probe failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
+    // GPU colour-conversion probe (ADR-0011 4d-gpu.0): `host-windows.exe --probe-gpucolor`.
+    // Confirms the GPU video processor can convert BGRA -> NV12 (the GPU zero-copy pipeline).
+    if std::env::args().any(|a| a == "--probe-gpucolor") {
+        match gpu_color::probe(1920, 1080) {
+            Ok(desc) => println!("[host] GPU colour OK: {desc}"),
+            Err(e) => println!("[host] GPU colour probe failed: {e:#}"),
         }
         return Ok(());
     }
