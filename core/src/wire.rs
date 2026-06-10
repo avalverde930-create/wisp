@@ -50,9 +50,12 @@ pub enum WireError {
 pub enum FrameCodec {
     /// Uncompressed BGRA8 (loopback / debugging only — huge).
     RawBgra = 0,
-    /// LZ4-compressed BGRA8 (Phase-0a default; cheap, keeps LAN bandwidth sane).
+    /// LZ4-compressed BGRA8 keyframe (Phase-0a default; also the GOP keyframe in 0b).
     Lz4Bgra = 1,
-    // Phase-0b/1: HwH264 = 2 (WGC -> NVENC/QSV/AMF, x264 floor).
+    /// LZ4-compressed XOR delta vs the previous frame (Phase-0b interframe, ADR-0011 4a).
+    /// Self-describing only with decoder state — decode via `codec::FrameDecoder`.
+    Lz4Delta = 2,
+    // Phase-0b/1: HwH264 = 3 (WGC -> NVENC/QSV/AMF, x264 floor).
 }
 
 impl FrameCodec {
@@ -60,6 +63,7 @@ impl FrameCodec {
         match v {
             0 => Ok(FrameCodec::RawBgra),
             1 => Ok(FrameCodec::Lz4Bgra),
+            2 => Ok(FrameCodec::Lz4Delta),
             other => Err(WireError::UnknownCodec(other)),
         }
     }

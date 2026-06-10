@@ -16,11 +16,13 @@ use wisp_core::{channel, codec, crypto, identity, known_hosts, transport, trust}
 
 use crate::state::{LatestFrame, Shared};
 
-/// Decode one Noise-decrypted frame plaintext (fixed header ++ LZ4 payload) to BGRA.
-fn decode_frame_plaintext(pt: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
+/// Decode one Noise-decrypted frame plaintext (fixed header ++ codec payload) to BGRA. The
+/// decoder is stateful (keyframe / XOR-delta interframe, ADR-0011 4a), so it is threaded
+/// across the whole frame stream.
+fn decode_frame_plaintext(dec: &mut codec::FrameDecoder, pt: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     let header = FrameHeader::decode(pt).map_err(|e| anyhow::anyhow!("frame header: {e}"))?;
     let payload = &pt[FrameHeader::ENCODED_LEN..];
-    let bgra = codec::decode_frame(header.codec, payload)?;
+    let bgra = dec.decode(header.codec, payload)?;
     Ok((header.width, header.height, bgra))
 }
 
@@ -126,11 +128,12 @@ pub async fn net_main(
     });
 
     // frames: receive, decrypt, parse, store latest, update stats.
+    let mut decoder = codec::FrameDecoder::new();
     let mut count = 0u32;
     let mut last = Instant::now();
     loop {
         let pt = channel::read_secure(&mut recv, &session).await?;
-        let (width, height, bgra) = decode_frame_plaintext(&pt)?;
+        let (width, height, bgra) = decode_frame_plaintext(&mut decoder, &pt)?;
         *shared.frame.lock().unwrap() = Some(LatestFrame {
             width,
             height,
@@ -164,12 +167,13 @@ pub fn run_bench(addr: SocketAddr, token: String) -> Result<()> {
             .await
             .context("send token")?;
 
+        let mut decoder = codec::FrameDecoder::new();
         let start = Instant::now();
         let (mut count, mut bytes) = (0u64, 0u64);
         let mut dims = (0u32, 0u32);
         while start.elapsed() < Duration::from_secs(6) {
             let pt = channel::read_secure(&mut recv, &session).await?;
-            let (width, height, bgra) = decode_frame_plaintext(&pt)?;
+            let (width, height, bgra) = decode_frame_plaintext(&mut decoder, &pt)?;
             anyhow::ensure!(
                 bgra.len() == (width as usize) * (height as usize) * 4,
                 "decoded size {} != {width}x{height}x4",

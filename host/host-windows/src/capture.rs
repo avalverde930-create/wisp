@@ -1,9 +1,10 @@
 //! host-windows::capture — GDI primary-monitor screen capture.
 //!
-//! Grabs the primary monitor as top-down BGRA8 on a dedicated OS thread, LZ4-encodes
-//! each frame (`wisp_core::codec`), and hands them to the net task over a bounded
-//! channel (back-pressure paces capture). Phase-0b replaces this with WGC + a hardware
-//! H.264 `VideoEncoder` behind the same call site.
+//! Grabs the primary monitor as top-down BGRA8 on a dedicated OS thread, encodes each frame
+//! through a stateful `wisp_core::codec::FrameEncoder` (GOP keyframe + XOR-delta interframe,
+//! ADR-0011 4a), and hands them to the net task over a bounded channel (back-pressure paces
+//! capture). Phase-0b 4b/4c replace the GDI grab with WGC and the encoder with hardware H.264
+//! behind the same `FrameEncoder` call site.
 
 use std::time::{Duration, Instant};
 
@@ -85,18 +86,19 @@ fn capture_into(width: i32, height: i32, buf: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-/// Capture loop (~30 fps): grab -> LZ4-encode -> push to `tx`. Exits when the receiver
+/// Capture loop (~30 fps): grab -> interframe-encode -> push to `tx`. Exits when the receiver
 /// (the net task) drops, which is how a disconnect tears the capture thread down.
 pub fn capture_loop(tx: mpsc::Sender<CapturedFrame>) {
     let (w, h) = primary_size();
     let start = Instant::now();
     let mut seq = 0u64;
     let mut raw = Vec::new();
+    let mut encoder = codec::FrameEncoder::new(codec::DEFAULT_GOP);
     let target = Duration::from_millis(33); // ~30 fps for the spike
     loop {
         let t0 = Instant::now();
         if capture_into(w, h, &mut raw).is_ok() {
-            let (codec_tag, payload) = codec::encode_frame(&raw);
+            let (codec_tag, payload) = encoder.encode(&raw, w as u32, h as u32);
             let frame = CapturedFrame {
                 seq,
                 width: w as u32,
