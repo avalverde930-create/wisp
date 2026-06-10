@@ -10,11 +10,12 @@ quinn.workspace = true
 rustls.workspace = true
 rcgen.workspace = true
 lz4_flex.workspace = true
+snow.workspace = true # Noise XX/IK handshake + session AEAD (core::crypto, ADR-0003)
 tracing.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 
-# Phase 1 adds: snow (Noise XX->IK), ring/serde as needed.
+# Phase 1 (in progress): snow wired into core::crypto. ring/serde added as needed.
 # In Phase 2-3 this crate splits into core/protocol-types, core/crypto, core/transport,
 # core/session, core/media, core/identity, core/audit, core/telemetry. Until compile times
 # hurt or a second binary needs a subset, ONE crate with modules is correct.
