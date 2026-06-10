@@ -4,6 +4,7 @@
 //! Module map (one responsibility each):
 //! - `wire`      — hand-written wire structs + (de)serialization (frame header, input).
 //! - `codec`     — frame (de)compression for the media path (Phase-0a: LZ4; 0b: HW H.264).
+//! - `color`     — BGRA8 <-> NV12 colour conversion for the H.264 path (ADR-0011 4c).
 //! - `transport` — quinn endpoint setup + spike TLS (the QUIC pipe).
 //! - `framing`   — protocol I/O over quinn streams (frame / input / hello read+write).
 //! - `crypto`    — Noise XX/IK handshake + session AEAD + SAS (ADR-0003).
@@ -16,6 +17,7 @@
 pub mod audit; // append-only hash-chained local log. Crypto-grade ownership.
 pub mod channel; // establish a Noise-secured session over a quinn bi-stream
 pub mod codec; // frame (de)compression for the media path (Phase-0a: LZ4; 0b: HW H.264)
+pub mod color; // BGRA8 <-> NV12 colour conversion for the H.264 path (ADR-0011 4c)
 pub mod crypto; // Noise XX->IK; ONLY crypto home; fuzzed. Crypto-grade ownership.
 pub mod framing; // quinn-stream protocol I/O: frame / input / hello read+write
 pub mod identity; // device keys, secure element, revocation, recovery-code slot
