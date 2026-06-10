@@ -13,3 +13,8 @@ quinn.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 anyhow.workspace = true
+
+# Windows-only H.264 decode (Media Foundation, ADR-0011 4c). The client is Windows for the
+# MVP; HwH264 frames are decoded here, other codecs by the portable wisp_core::codec.
+[target.'cfg(windows)'.dependencies]
+wisp-media-win = { path = "../media/media-windows" }

@@ -390,22 +390,36 @@ impl H264Decoder {
         Ok(())
     }
 
-    /// Decode an H.264 elementary stream; returns the decoded NV12 frames.
+    /// Submit one H.264 access unit to the decoder.
+    unsafe fn process_input(&mut self, h264: &[u8]) -> Result<()> {
+        let buf = MFCreateMemoryBuffer(h264.len() as u32).context("MFCreateMemoryBuffer")?;
+        let mut ptr = std::ptr::null_mut();
+        buf.Lock(&mut ptr, None, None).context("Lock")?;
+        std::ptr::copy_nonoverlapping(h264.as_ptr(), ptr, h264.len());
+        buf.Unlock().ok();
+        buf.SetCurrentLength(h264.len() as u32)?;
+        let sample = MFCreateSample().context("MFCreateSample")?;
+        sample.AddBuffer(&buf)?;
+        sample.SetSampleTime(0)?;
+        self.transform
+            .ProcessInput(0, &sample, 0)
+            .context("ProcessInput (decoder)")
+    }
+
+    /// Streaming decode: feed one H.264 access unit and return any NV12 frames now available
+    /// (no drain — the decoder keeps its state for the next call). Use this for a live stream.
+    pub fn feed(&mut self, h264: &[u8]) -> Result<Vec<Vec<u8>>> {
+        unsafe {
+            self.process_input(h264)?;
+            self.collect_output()
+        }
+    }
+
+    /// One-shot decode of a complete H.264 elementary stream (feed + drain). Used by the
+    /// round-trip self-test; for a live stream use [`H264Decoder::feed`].
     pub fn decode(&mut self, h264: &[u8]) -> Result<Vec<Vec<u8>>> {
         unsafe {
-            let buf = MFCreateMemoryBuffer(h264.len() as u32).context("MFCreateMemoryBuffer")?;
-            let mut ptr = std::ptr::null_mut();
-            buf.Lock(&mut ptr, None, None).context("Lock")?;
-            std::ptr::copy_nonoverlapping(h264.as_ptr(), ptr, h264.len());
-            buf.Unlock().ok();
-            buf.SetCurrentLength(h264.len() as u32)?;
-            let sample = MFCreateSample().context("MFCreateSample")?;
-            sample.AddBuffer(&buf)?;
-            sample.SetSampleTime(0)?;
-            self.transform
-                .ProcessInput(0, &sample, 0)
-                .context("ProcessInput (decoder)")?;
-
+            self.process_input(h264)?;
             let mut frames = self.collect_output()?;
             self.transform
                 .ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0)

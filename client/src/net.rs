@@ -11,19 +11,67 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::mpsc;
-use wisp_core::wire::{FrameHeader, InputEvent};
-use wisp_core::{channel, codec, crypto, identity, known_hosts, transport, trust};
+use wisp_core::wire::{FrameCodec, FrameHeader, InputEvent};
+use wisp_core::{channel, codec, color, crypto, identity, known_hosts, transport, trust};
 
 use crate::state::{LatestFrame, Shared};
 
-/// Decode one Noise-decrypted frame plaintext (fixed header ++ codec payload) to BGRA. The
-/// decoder is stateful (keyframe / XOR-delta interframe, ADR-0011 4a), so it is threaded
-/// across the whole frame stream.
-fn decode_frame_plaintext(dec: &mut codec::FrameDecoder, pt: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
-    let header = FrameHeader::decode(pt).map_err(|e| anyhow::anyhow!("frame header: {e}"))?;
-    let payload = &pt[FrameHeader::ENCODED_LEN..];
-    let bgra = dec.decode(header.codec, payload)?;
-    Ok((header.width, header.height, bgra))
+/// Decodes the received frame stream to BGRA. Portable codecs (raw / LZ4 keyframe / XOR-delta
+/// interframe) go through the stateful `wisp_core::codec::FrameDecoder`; `HwH264` access units
+/// go through a Media Foundation `H264Decoder` (Windows only, lazily created from the first
+/// frame's dimensions). One received payload yields zero or more decoded frames.
+struct FrameSink {
+    core: codec::FrameDecoder,
+    #[cfg(windows)]
+    h264: Option<wisp_media_win::h264::H264Decoder>,
+}
+
+impl FrameSink {
+    fn new() -> Self {
+        Self {
+            core: codec::FrameDecoder::new(),
+            #[cfg(windows)]
+            h264: None,
+        }
+    }
+
+    /// Decode one Noise-decrypted frame plaintext (fixed header ++ codec payload). Returns the
+    /// 0+ BGRA frames it produced (H.264 may buffer; non-H.264 yields exactly one).
+    fn decode(&mut self, pt: &[u8]) -> Result<Vec<(u32, u32, Vec<u8>)>> {
+        let header = FrameHeader::decode(pt).map_err(|e| anyhow::anyhow!("frame header: {e}"))?;
+        let payload = &pt[FrameHeader::ENCODED_LEN..];
+        match header.codec {
+            FrameCodec::HwH264 => self.decode_h264(header.width, header.height, payload),
+            _ => {
+                let bgra = self.core.decode(header.codec, payload)?;
+                Ok(vec![(header.width, header.height, bgra)])
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    fn decode_h264(&mut self, w: u32, h: u32, payload: &[u8]) -> Result<Vec<(u32, u32, Vec<u8>)>> {
+        if self.h264.is_none() {
+            self.h264 = Some(wisp_media_win::h264::H264Decoder::new_software(w, h, 30)?);
+        }
+        let frames = self.h264.as_mut().unwrap().feed(payload)?;
+        let expected = color::nv12_len(w, h);
+        Ok(frames
+            .iter()
+            .filter(|nv| nv.len() >= expected)
+            .map(|nv| (w, h, color::nv12_to_bgra(&nv[..expected], w, h)))
+            .collect())
+    }
+
+    #[cfg(not(windows))]
+    fn decode_h264(
+        &mut self,
+        _w: u32,
+        _h: u32,
+        _payload: &[u8],
+    ) -> Result<Vec<(u32, u32, Vec<u8>)>> {
+        anyhow::bail!("HwH264 frames require Windows (Media Foundation) decode support")
+    }
 }
 
 /// Load the persistent client device key (DPAPI-wrapped at rest, ADR-0009 Option A), or an
@@ -128,18 +176,19 @@ pub async fn net_main(
     });
 
     // frames: receive, decrypt, parse, store latest, update stats.
-    let mut decoder = codec::FrameDecoder::new();
+    let mut sink = FrameSink::new();
     let mut count = 0u32;
     let mut last = Instant::now();
     loop {
         let pt = channel::read_secure(&mut recv, &session).await?;
-        let (width, height, bgra) = decode_frame_plaintext(&mut decoder, &pt)?;
-        *shared.frame.lock().unwrap() = Some(LatestFrame {
-            width,
-            height,
-            bgra,
-        });
-        count += 1;
+        for (width, height, bgra) in sink.decode(&pt)? {
+            *shared.frame.lock().unwrap() = Some(LatestFrame {
+                width,
+                height,
+                bgra,
+            });
+            count += 1;
+        }
         let dt = last.elapsed().as_secs_f32();
         if dt >= 0.5 {
             let mut st = shared.stats.lock().unwrap();
@@ -167,21 +216,22 @@ pub fn run_bench(addr: SocketAddr, token: String) -> Result<()> {
             .await
             .context("send token")?;
 
-        let mut decoder = codec::FrameDecoder::new();
+        let mut sink = FrameSink::new();
         let start = Instant::now();
         let (mut count, mut bytes) = (0u64, 0u64);
         let mut dims = (0u32, 0u32);
         while start.elapsed() < Duration::from_secs(6) {
             let pt = channel::read_secure(&mut recv, &session).await?;
-            let (width, height, bgra) = decode_frame_plaintext(&mut decoder, &pt)?;
-            anyhow::ensure!(
-                bgra.len() == (width as usize) * (height as usize) * 4,
-                "decoded size {} != {width}x{height}x4",
-                bgra.len()
-            );
-            count += 1;
             bytes += pt.len() as u64;
-            dims = (width, height);
+            for (width, height, bgra) in sink.decode(&pt)? {
+                anyhow::ensure!(
+                    bgra.len() == (width as usize) * (height as usize) * 4,
+                    "decoded size {} != {width}x{height}x4",
+                    bgra.len()
+                );
+                count += 1;
+                dims = (width, height);
+            }
         }
         let secs = start.elapsed().as_secs_f64();
         println!(

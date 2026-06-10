@@ -308,6 +308,7 @@ dependencies = [
  "tracing-subscriber",
  "winit",
  "wisp-core",
+ "wisp-media-win",
 ]
 
 [[package]]
