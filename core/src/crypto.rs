@@ -14,13 +14,23 @@
 use anyhow::Result;
 use snow::{Builder, HandshakeState, TransportState};
 
-/// The native E2EE suite (ADR-0003). Non-FIPS for the MVP (ADR-0009 Option A).
+/// First-contact suite (ADR-0003): full mutual auth, both statics transmitted. Non-FIPS
+/// for the MVP (ADR-0009 Option A).
 pub const NOISE_PARAMS: &str = "Noise_XX_25519_ChaChaPoly_BLAKE2s";
+/// 0-RTT reconnect suite (ADR-0003): the initiator already knows (cached) the responder
+/// static from a prior XX, so reconnect is one round trip and can carry a 0-RTT payload.
+pub const NOISE_PARAMS_IK: &str = "Noise_IK_25519_ChaChaPoly_BLAKE2s";
 
 fn noise_params() -> Result<snow::params::NoiseParams> {
     NOISE_PARAMS
         .parse()
         .map_err(|e| anyhow::anyhow!("parse noise params: {e:?}"))
+}
+
+fn noise_params_ik() -> Result<snow::params::NoiseParams> {
+    NOISE_PARAMS_IK
+        .parse()
+        .map_err(|e| anyhow::anyhow!("parse noise IK params: {e:?}"))
 }
 
 /// A long-term device static keypair (X25519). Key *storage* (OS-keystore wrapping per
@@ -41,9 +51,9 @@ pub fn generate_static_keypair() -> Result<StaticKeypair> {
     })
 }
 
-/// One side of an in-progress Noise XX handshake. Drive it with `write`/`read` in the
-/// canonical XX order (initiator: write, read, write; responder: read, write, read),
-/// then `into_session`.
+/// One side of an in-progress Noise handshake (XX first-contact or IK reconnect). Drive
+/// it with `write`/`read` in the pattern's message order (XX: 3 messages; IK: 2), then
+/// `into_session`.
 pub struct Handshake {
     state: HandshakeState,
 }
@@ -62,6 +72,26 @@ impl Handshake {
             .local_private_key(static_private)
             .build_responder()
             .map_err(|e| anyhow::anyhow!("build responder: {e:?}"))?;
+        Ok(Self { state })
+    }
+
+    /// IK initiator: the responder's static public key is already known (cached from a
+    /// prior XX), enabling a 0-RTT reconnect (ADR-0003).
+    pub fn initiator_ik(static_private: &[u8], remote_public: &[u8]) -> Result<Self> {
+        let state = Builder::new(noise_params_ik()?)
+            .local_private_key(static_private)
+            .remote_public_key(remote_public)
+            .build_initiator()
+            .map_err(|e| anyhow::anyhow!("build IK initiator: {e:?}"))?;
+        Ok(Self { state })
+    }
+
+    /// IK responder: learns the initiator static from the first message.
+    pub fn responder_ik(static_private: &[u8]) -> Result<Self> {
+        let state = Builder::new(noise_params_ik()?)
+            .local_private_key(static_private)
+            .build_responder()
+            .map_err(|e| anyhow::anyhow!("build IK responder: {e:?}"))?;
         Ok(Self { state })
     }
 
@@ -188,6 +218,31 @@ mod tests {
         assert_eq!(sr.decrypt(&ct).unwrap(), b"hello wisp");
         let ct2 = sr.encrypt(b"ack").unwrap();
         assert_eq!(si.decrypt(&ct2).unwrap(), b"ack");
+    }
+
+    /// IK 0-RTT reconnect: the initiator already knows the responder static (cached from a
+    /// prior XX); the 2-message handshake completes and a message round-trips.
+    #[test]
+    fn ik_reconnect_handshake_and_roundtrip() {
+        let res_kp = generate_static_keypair().unwrap();
+        let ini_kp = generate_static_keypair().unwrap();
+        let mut ini = Handshake::initiator_ik(&ini_kp.private, &res_kp.public).unwrap();
+        let mut res = Handshake::responder_ik(&res_kp.private).unwrap();
+
+        // IK: -> e es s ss ; <- e ee se
+        let m1 = ini.write().unwrap();
+        res.read(&m1).unwrap();
+        let m2 = res.write().unwrap();
+        ini.read(&m2).unwrap();
+
+        assert!(ini.is_finished() && res.is_finished());
+        // The responder learns the initiator static; the initiator already knew the responder's.
+        assert_eq!(res.remote_static().unwrap(), ini_kp.public);
+
+        let mut si = ini.into_session().unwrap();
+        let mut sr = res.into_session().unwrap();
+        let ct = si.encrypt(b"reconnect").unwrap();
+        assert_eq!(sr.decrypt(&ct).unwrap(), b"reconnect");
     }
 
     /// A tampered ciphertext must fail the AEAD tag check (no silent corruption).
