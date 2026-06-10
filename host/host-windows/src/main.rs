@@ -2,9 +2,10 @@
 //! quinn media stream; client input -> Win32 `SendInput`. Interactive-session only (ADR-0010).
 //!
 //! Module map (one responsibility each):
-//! - `capture`    — GDI screen grab + LZ4 encode on a dedicated thread.
-//! - `inject`     — Win32 `SendInput` injection of inbound input.
-//! - `connection` — one Noise-secured, pinned client session.
+//! - `capture`     — GDI screen grab + interframe encode on a dedicated thread.
+//! - `capture_wgc` — Windows.Graphics.Capture path (ADR-0011 4b; 4b.0 = capability probe).
+//! - `inject`      — Win32 `SendInput` injection of inbound input.
+//! - `connection`  — one Noise-secured, pinned client session.
 //!
 //! This file is the entry point: arg parsing, the persistent device key, the pinned
 //! trust store, the token guardrail, and the accept loop.
@@ -14,6 +15,7 @@
 //! unless the host runs in pair mode (WISP_PAIR=1).
 
 mod capture;
+mod capture_wgc;
 mod connection;
 mod inject;
 
@@ -29,6 +31,20 @@ use crate::connection::handle_connection;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // WGC capability probe (ADR-0011 4b.0): `host-windows.exe --probe-wgc`. Confirms
+    // Windows.Graphics.Capture initializes on this machine, prints the WGC monitor size, exits.
+    if std::env::args().any(|a| a == "--probe-wgc") {
+        match capture_wgc::probe() {
+            Ok((w, h)) => {
+                println!(
+                    "[host] WGC OK: Windows.Graphics.Capture initialized; primary monitor {w}x{h}"
+                )
+            }
+            Err(e) => println!("[host] WGC unavailable: {e:#}"),
+        }
+        return Ok(());
+    }
+
     let bind: SocketAddr = std::env::args()
         .nth(1)
         .unwrap_or_else(|| "127.0.0.1:9000".to_string())
