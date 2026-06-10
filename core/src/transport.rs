@@ -1,15 +1,14 @@
-//! core::transport — the native data plane (quinn/QUIC): encryption, congestion
-//! control, datagrams, connection migration (survives Wi-Fi<->cellular). webrtc-rs
-//! is added in Phase 3 (browser + extra NAT) BEHIND a MediaTransport trait extracted
-//! then. The packet decode path here is a designated cargo-fuzz target. Never custom UDP.
+//! wisp-core::transport — the native data plane (quinn/QUIC): endpoint setup +
+//! connection. The per-stream protocol I/O lives in `framing`; this module only builds
+//! and dials the QUIC pipe. webrtc-rs is added in Phase 3 (browser + extra NAT) BEHIND a
+//! MediaTransport trait extracted then. Never custom UDP.
 //!
 //! ============================ PHASE-0a SPIKE SECURITY NOTE ============================
 //! QUIC mandates TLS. For the LAN spike the client SKIPS server-certificate
-//! verification (`SkipServerVerification`) and the server uses a throwaway
-//! self-signed cert. This is NOT the product's security model. In Phase 1 the real
-//! authentication + confidentiality is the Noise XX/IK channel + out-of-band SAS
-//! pairing (ADR-0003), and every frame rides INSIDE that envelope. This module
-//! exists to prove the capture->transport->render->input loop, not to secure it.
+//! verification (`SkipServerVerification`) and the server uses a throwaway self-signed
+//! cert. This is NOT the product's security model. In Phase 1 the real authentication +
+//! confidentiality is the Noise XX/IK channel + out-of-band SAS pairing (ADR-0003), and
+//! every frame rides INSIDE that envelope. This module only sets up the QUIC pipe.
 //! =====================================================================================
 
 use std::net::SocketAddr;
@@ -17,10 +16,8 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
-use quinn::{ClientConfig, Connection, Endpoint, RecvStream, SendStream, ServerConfig};
+use quinn::{ClientConfig, Connection, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime};
-
-use crate::wire::{FrameHeader, InputEvent, WireError};
 
 /// ALPN id for the spike protocol.
 pub const ALPN: &[u8] = b"wisp/0";
@@ -74,101 +71,13 @@ pub fn client_endpoint() -> Result<Endpoint> {
     Ok(endpoint)
 }
 
-/// Dial a host. `server_name` is cosmetic for the spike (verification is skipped).
+/// Dial a host. The server name is cosmetic for the spike (verification is skipped).
 pub async fn connect(endpoint: &Endpoint, addr: SocketAddr) -> Result<Connection> {
     endpoint
         .connect(addr, "localhost")
         .context("start connect")?
         .await
         .context("quic handshake")
-}
-
-// ---------------------------------------------------------------------------
-// Media-frame stream helpers (host -> client, ordered uni stream)
-// ---------------------------------------------------------------------------
-
-pub async fn write_frame(
-    send: &mut SendStream,
-    header: &FrameHeader,
-    payload: &[u8],
-) -> Result<()> {
-    send.write_all(&header.encode())
-        .await
-        .context("write frame header")?;
-    send.write_all(payload)
-        .await
-        .context("write frame payload")?;
-    Ok(())
-}
-
-pub async fn read_frame(recv: &mut RecvStream) -> Result<(FrameHeader, Vec<u8>)> {
-    let mut hbuf = [0u8; FrameHeader::ENCODED_LEN];
-    recv.read_exact(&mut hbuf)
-        .await
-        .context("read frame header")?;
-    let header = FrameHeader::decode(&hbuf).map_err(wire_err)?;
-    let mut payload = vec![0u8; header.payload_len as usize];
-    recv.read_exact(&mut payload)
-        .await
-        .context("read frame payload")?;
-    Ok((header, payload))
-}
-
-// ---------------------------------------------------------------------------
-// Input-event stream helpers (client -> host, reliable uni stream)
-// ---------------------------------------------------------------------------
-
-pub async fn write_input(send: &mut SendStream, ev: &InputEvent) -> Result<()> {
-    let body = ev.encode();
-    send.write_all(&(body.len() as u16).to_be_bytes())
-        .await
-        .context("write input len")?;
-    send.write_all(&body).await.context("write input body")?;
-    Ok(())
-}
-
-pub async fn read_input(recv: &mut RecvStream) -> Result<InputEvent> {
-    let mut lb = [0u8; 2];
-    recv.read_exact(&mut lb).await.context("read input len")?;
-    let len = u16::from_be_bytes(lb) as usize;
-    let mut body = vec![0u8; len];
-    recv.read_exact(&mut body)
-        .await
-        .context("read input body")?;
-    let (ev, _) = InputEvent::decode(&body).map_err(wire_err)?;
-    Ok(ev)
-}
-
-// ---------------------------------------------------------------------------
-// SPIKE auth handshake: a pre-shared token sent on the control stream BEFORE any
-// input is accepted or any frame is sent. NOTE: it crosses the cert-unverified
-// channel in cleartext, so it guards against casual/opportunistic LAN access,
-// NOT an active MITM. Real authentication is the Phase-1 Noise + SAS pairing.
-// ---------------------------------------------------------------------------
-
-pub async fn write_hello(send: &mut SendStream, token: &str) -> Result<()> {
-    let body = token.as_bytes();
-    send.write_all(&(body.len() as u16).to_be_bytes())
-        .await
-        .context("write hello len")?;
-    send.write_all(body).await.context("write hello body")?;
-    Ok(())
-}
-
-pub async fn read_hello(recv: &mut RecvStream) -> Result<String> {
-    let mut lb = [0u8; 2];
-    recv.read_exact(&mut lb).await.context("read hello len")?;
-    let len = u16::from_be_bytes(lb) as usize;
-    anyhow::ensure!(len <= 256, "hello token too long: {len}");
-    let mut body = vec![0u8; len];
-    recv.read_exact(&mut body)
-        .await
-        .context("read hello body")?;
-    String::from_utf8(body).context("hello token utf8")
-}
-
-fn wire_err(e: WireError) -> anyhow::Error {
-    anyhow::anyhow!("wire decode: {e}")
 }
 
 // ---------------------------------------------------------------------------
