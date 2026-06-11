@@ -77,6 +77,17 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // GPU colour convert + readback round-trip (ADR-0011 4d-gpu.1b): `--selftest-gpucolor`.
+    if std::env::args().any(|a| a == "--selftest-gpucolor") {
+        match gpu_color::selftest(1920, 1080) {
+            Ok(mae) => println!(
+                "[host] GPU colour round-trip: BGRA->NV12 (GPU)->BGRA mean abs error {mae:.2}/255"
+            ),
+            Err(e) => println!("[host] GPU colour self-test failed: {e:#}"),
+        }
+        return Ok(());
+    }
+
     // Async QSV encode round-trip (ADR-0011 4c.1c.1a): `host-windows.exe --selftest-qsv`.
     // Encodes a synthetic frame through the hardware async encoder and decodes it back.
     if std::env::args().any(|a| a == "--selftest-qsv") {
